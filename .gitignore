@@ -1,0 +1,91 @@
+# Dependency directories
+node_modules/
+__pycache__/
+.venv/
+venv/
+
+# Environment variables
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+*.lcov
+
+# Temporary folders
+tmp/
+temp/
+
+# Platform files
+*.swp
+*.swo
+*~
+
+# Local configuration files
+.vscode/settings.json
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Azurite storage
+.azurite/
+
+# Cache directories
+.cache/
+.ruff_cache/
+
+# Special Windows files
+$vcvars
+$vs
+nul
+
+# Browser automation artifacts
+pw_user_chromium/
+pw_user_firefox/
+pw_user_webkit/
+test-results/
+
+# Model and training artifacts
+.models/
+*.bin
+*.pt
+*.pth
+*.ckpt
+*.onnx
+
+# Agent related files that shouldn't be committed
+.agents/mailboxes/
+.agents/DISPATCH.md
+.agents/LOCKS.json
+.agents/CHANGELOG.md
+
+# Diagnostic and temporary files
+*.csv
+*.log
+*.txt
+*.bak

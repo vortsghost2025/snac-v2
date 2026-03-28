@@ -1,0 +1,1002 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kilo Agent Cockpit - Browser Testing & Chat</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      background: #0f0f0f;
+      color: #e0e0e0;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    .container {
+      display: grid;
+      grid-template-columns: 300px 1fr 350px;
+      grid-template-rows: 60px 1fr;
+      height: 100vh;
+      gap: 1px;
+      background: #1a1a1a;
+    }
+
+    /* Header */
+    .header {
+      grid-column: 1 / -1;
+      background: #1a1a1a;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 20px;
+      border-bottom: 1px solid #333;
+    }
+
+    .header h1 {
+      font-size: 18px;
+      color: #00d4ff;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .status-indicator {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #ff4444;
+      animation: pulse 2s infinite;
+    }
+
+    .status-dot.connected {
+      background: #00ff88;
+    }
+
+    .status-dot.testing {
+      background: #ffaa00;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    /* Sidebar - Service List */
+    .sidebar {
+      background: #141414;
+      padding: 20px;
+      overflow-y: auto;
+    }
+
+    .sidebar h2 {
+      font-size: 14px;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 15px;
+    }
+
+    .service-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .service-item {
+      background: #1f1f1f;
+      border: 1px solid #333;
+      border-radius: 8px;
+      padding: 12px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .service-item:hover {
+      border-color: #00d4ff;
+      background: #252525;
+    }
+
+    .service-item.active {
+      border-color: #00d4ff;
+      background: #1a2a3a;
+    }
+
+    .service-item.connected {
+      border-left: 3px solid #00ff88;
+    }
+
+    .service-item.failed {
+      border-left: 3px solid #ff4444;
+    }
+
+    .service-item.testing {
+      border-left: 3px solid #ffaa00;
+    }
+
+    .service-name {
+      font-weight: 600;
+      font-size: 13px;
+      margin-bottom: 4px;
+    }
+
+    .service-url {
+      font-size: 11px;
+      color: #666;
+      word-break: break-all;
+    }
+
+    .service-status {
+      font-size: 11px;
+      margin-top: 6px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    /* Main Content - Browser View & Logs */
+    .main-content {
+      display: grid;
+      grid-template-rows: 1fr 200px;
+      background: #0a0a0a;
+    }
+
+    .browser-view {
+      background: #0a0a0a;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .browser-view iframe {
+      width: 100%;
+      height: 100%;
+      border: none;
+      background: white;
+    }
+
+    .browser-placeholder {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: #666;
+      gap: 20px;
+    }
+
+    .browser-placeholder svg {
+      width: 64px;
+      height: 64px;
+      opacity: 0.5;
+    }
+
+    .logs-panel {
+      background: #141414;
+      border-top: 1px solid #333;
+      padding: 15px;
+      overflow-y: auto;
+      font-family: 'Courier New', monospace;
+      font-size: 12px;
+    }
+
+    .logs-panel h3 {
+      font-size: 12px;
+      color: #888;
+      margin-bottom: 10px;
+      font-family: inherit;
+    }
+
+    .log-entry {
+      padding: 4px 0;
+      border-bottom: 1px solid #222;
+    }
+
+    .log-time {
+      color: #666;
+    }
+
+    .log-type {
+      color: #00d4ff;
+      font-weight: bold;
+    }
+
+    .log-type.error {
+      color: #ff4444;
+    }
+
+    .log-type.success {
+      color: #00ff88;
+    }
+
+    .log-type.warning {
+      color: #ffaa00;
+    }
+
+    /* Chat Panel */
+    .chat-panel {
+      background: #141414;
+      border-left: 1px solid #333;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .chat-header {
+      padding: 15px;
+      border-bottom: 1px solid #333;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .chat-header h2 {
+      font-size: 14px;
+      color: #00d4ff;
+    }
+
+    .agent-badge {
+      background: #00d4ff;
+      color: #000;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: bold;
+    }
+
+    .chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 15px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .message {
+      max-width: 90%;
+      padding: 12px;
+      border-radius: 12px;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .message.user {
+      align-self: flex-end;
+      background: #00d4ff;
+      color: #000;
+      border-bottom-right-radius: 4px;
+    }
+
+    .message.agent {
+      align-self: flex-start;
+      background: #1f1f1f;
+      border: 1px solid #333;
+      border-bottom-left-radius: 4px;
+    }
+
+    .message.system {
+      align-self: center;
+      background: #2a2a2a;
+      border: 1px solid #444;
+      font-size: 12px;
+      color: #888;
+    }
+
+    .message-header {
+      font-size: 11px;
+      color: #888;
+      margin-bottom: 4px;
+    }
+
+    .message.user .message-header {
+      color: #006666;
+    }
+
+    .chat-input-area {
+      padding: 15px;
+      border-top: 1px solid #333;
+    }
+
+    .chat-input {
+      width: 100%;
+      background: #1f1f1f;
+      border: 1px solid #333;
+      border-radius: 8px;
+      padding: 12px;
+      color: #e0e0e0;
+      font-size: 13px;
+      resize: none;
+      font-family: inherit;
+    }
+
+    .chat-input:focus {
+      outline: none;
+      border-color: #00d4ff;
+    }
+
+    .chat-buttons {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .btn {
+      padding: 8px 16px;
+      border: none;
+      border-radius: 6px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.2s;
+      font-weight: 600;
+    }
+
+    .btn-primary {
+      background: #00d4ff;
+      color: #000;
+    }
+
+    .btn-primary:hover {
+      background: #00bbff;
+    }
+
+    .btn-secondary {
+      background: #333;
+      color: #e0e0e0;
+    }
+
+    .btn-secondary:hover {
+      background: #444;
+    }
+
+    /* Quick Actions */
+    .quick-actions {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 15px;
+      flex-wrap: wrap;
+    }
+
+    .quick-action {
+      background: #1f1f1f;
+      border: 1px solid #333;
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 11px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .quick-action:hover {
+      border-color: #00d4ff;
+      background: #252525;
+    }
+
+    /* Test Results Overlay */
+    .test-results {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      background: rgba(20, 20, 20, 0.95);
+      border: 1px solid #333;
+      border-radius: 12px;
+      padding: 20px;
+      max-width: 400px;
+      max-height: 60%;
+      overflow-y: auto;
+      display: none;
+    }
+
+    .test-results.show {
+      display: block;
+    }
+
+    .test-results h3 {
+      font-size: 14px;
+      margin-bottom: 15px;
+      color: #00d4ff;
+    }
+
+    .result-item {
+      padding: 10px;
+      border-radius: 6px;
+      margin-bottom: 8px;
+      font-size: 12px;
+    }
+
+    .result-item.pass {
+      background: rgba(0, 255, 136, 0.1);
+      border: 1px solid #00ff88;
+    }
+
+    .result-item.fail {
+      background: rgba(255, 68, 68, 0.1);
+      border: 1px solid #ff4444;
+    }
+
+    /* Responsive */
+    .quick-test-header {
+      margin-top: 20px;
+    }
+
+    .browser-hint {
+      font-size: 12px;
+      color: #444;
+    }
+    
+    .auth-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      padding: 5px 10px;
+      background: #1f1f1f;
+      border-radius: 4px;
+      margin-top: 10px;
+    }
+    
+    .auth-indicator {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #ff4444;
+    }
+    
+    .auth-indicator.authenticated {
+      background: #00ff88;
+    }
+    
+    .auth-controls {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    
+    .btn-auth {
+      flex: 1;
+      padding: 6px 8px;
+      border: 1px solid #333;
+      background: #1f1f1f;
+      color: #e0e0e0;
+      border-radius: 4px;
+      font-size: 11px;
+      cursor: pointer;
+    }
+    
+    .btn-auth:hover {
+      background: #2a2a2a;
+    }
+    
+    .btn-auth.clear {
+      border-color: #ff4444;
+    }
+    
+    .btn-auth.clear:hover {
+      background: rgba(255, 68, 68, 0.2);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <header class="header">
+      <h1>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/>
+          <path d="M12 6v6l4 2"/>
+        </svg>
+        Kilo Agent Cockpit
+      </h1>
+      <div class="status-indicator">
+        <span>Agent Status:</span>
+        <span class="status-dot" id="agentStatus"></span>
+        <span id="agentStatusText">Disconnected</span>
+      </div>
+    </header>
+
+    <!-- Sidebar - Services -->
+    <aside class="sidebar">
+      <h2>Services</h2>
+      <div class="service-list" id="serviceList">
+        <!-- Services populated by JS -->
+      </div>
+      
+      <h2 class="quick-test-header">Authentication</h2>
+      <div class="auth-status">
+        <span class="auth-indicator" id="authIndicator"></span>
+        <span id="authStatusText">Not authenticated</span>
+      </div>
+      
+      <div class="auth-controls">
+        <button class="btn-auth clear" onclick="clearAuth()">Clear Auth</button>
+        <button class="btn-auth" onclick="showAuthDetails()">Show Details</button>
+      </div>
+      
+      <h2 class="quick-test-header">Quick Test</h2>
+      <div class="quick-actions">
+        <button class="quick-action" onclick="runAllTests()">Test All</button>
+        <button class="quick-action" onclick="testCockpit()">Cockpit</button>
+        <button class="quick-action" onclick="testBackend()">Backend</button>
+        <button class="quick-action" onclick="clearLogs()">Clear Logs</button>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content">
+      <div class="browser-view" id="browserView">
+        <div class="browser-placeholder">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+            <line x1="8" y1="21" x2="16" y2="21"/>
+            <line x1="12" y1="17" x2="12" y2="21"/>
+          </svg>
+          <p>Browser view will appear here when testing</p>
+          <p class="browser-hint">Select a service and click "Test" to begin</p>
+        </div>
+        
+        <!-- Test Results Overlay -->
+        <div class="test-results" id="testResults">
+          <h3>Test Results</h3>
+          <div id="resultsList"></div>
+        </div>
+      </div>
+
+      <div class="logs-panel">
+        <h3>Agent Logs</h3>
+        <div id="logs"></div>
+      </div>
+    </main>
+
+    <!-- Chat Panel -->
+    <aside class="chat-panel">
+      <div class="chat-header">
+        <h2>Agent Chat</h2>
+        <span class="agent-badge">ONLINE</span>
+      </div>
+
+      <div class="chat-messages" id="chatMessages">
+        <div class="message system">
+          <div class="message-header">System</div>
+          Welcome to Kilo Agent Cockpit. I'm your browser automation specialist.
+          I can test connections, verify services, and help you deploy with confidence.
+          All my reports are 100% truthful - I actually test each service in a real browser.
+        </div>
+      </div>
+
+      <div class="chat-input-area">
+        <textarea 
+          class="chat-input" 
+          id="chatInput"
+          rows="3"
+          placeholder="Type a command or ask me to test something..."
+        ></textarea>
+        <div class="chat-buttons">
+          <button class="btn btn-primary" onclick="sendMessage()">Send</button>
+          <button class="btn btn-secondary" onclick="runProductionCheck()">Full Check</button>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <script>
+    // Configuration
+    const API_BASE = window.location.origin;
+    let services = [];
+    let ws = null;
+    let currentTest = null;
+    
+    // Authentication state
+    let isAuthenticated = false;
+    let authTokens = {};
+
+    // Initialize
+    document.addEventListener('DOMContentLoaded', () => {
+      loadServices();
+      connectWebSocket();
+      checkStoredAuth();
+      addLog('System initialized', 'info');
+    });
+
+    // Check for stored authentication tokens
+    function checkStoredAuth() {
+      try {
+        const storedAuth = localStorage.getItem('kilo_auth_tokens');
+        if (storedAuth) {
+          authTokens = JSON.parse(storedAuth);
+          isAuthenticated = true;
+          updateAuthStatus(true);
+          addLog('Restored authentication from storage', 'success');
+        } else {
+          // Check if we have auth params in the current URL
+          parseAuthFromUrl();
+        }
+      } catch (err) {
+        addLog('Error checking stored auth: ' + err.message, 'error');
+      }
+    }
+
+    // Parse authentication parameters from the URL
+    function parseAuthFromUrl() {
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.has('state') && urlParams.has('auth') && urlParams.has('token')) {
+        // Extract authentication parameters
+        authTokens.state = urlParams.get('state');
+        authTokens.auth = urlParams.get('auth');
+        authTokens.token = urlParams.get('token');
+        
+        // Store in localStorage to persist across page reloads
+        localStorage.setItem('kilo_auth_tokens', JSON.stringify(authTokens));
+        isAuthenticated = true;
+        updateAuthStatus(true);
+        
+        // Clean the URL to remove sensitive tokens from history
+        const cleanUrl = window.location.pathname + window.location.hash;
+        window.history.replaceState({}, document.title, cleanUrl);
+        
+        addLog('Authentication tokens extracted from URL and stored', 'success');
+      }
+    }
+
+    // Update the UI to reflect authentication status
+    function updateAuthStatus(authenticated) {
+      const indicator = document.getElementById('authIndicator');
+      const statusText = document.getElementById('authStatusText');
+      
+      if (authenticated) {
+        indicator.classList.add('authenticated');
+        statusText.textContent = 'Authenticated';
+      } else {
+        indicator.classList.remove('authenticated');
+        statusText.textContent = 'Not authenticated';
+      }
+    }
+
+    // Clear authentication tokens
+    function clearAuth() {
+      localStorage.removeItem('kilo_auth_tokens');
+      authTokens = {};
+      isAuthenticated = false;
+      updateAuthStatus(false);
+      addLog('Authentication tokens cleared', 'info');
+      
+      // Inform the user
+      addChatMessage('Authentication cleared. You will need to log in again.', 'agent');
+    }
+
+    // Show authentication details (without revealing sensitive tokens completely)
+    function showAuthDetails() {
+      if (!isAuthenticated) {
+        addChatMessage('Not currently authenticated.', 'agent');
+        return;
+      }
+      
+      let details = 'Authentication Status: Active\n';
+      details += 'State: ' + (authTokens.state ? 'Present' : 'None') + '\n';
+      details += 'Auth param: ' + (authTokens.auth ? 'Present' : 'None') + '\n';
+      details += 'Token: ' + (authTokens.token ? 'Present' : 'None') + '\n';
+      
+      // Show partial tokens for verification
+      if (authTokens.state) {
+        details += 'State (first 8 chars): ' + authTokens.state.substring(0, 8) + '...\n';
+      }
+      if (authTokens.auth) {
+        details += 'Auth (first 8 chars): ' + authTokens.auth.substring(0, 8) + '...\n';
+      }
+      if (authTokens.token) {
+        details += 'Token (first 8 chars): ' + authTokens.token.substring(0, 8) + '...\n';
+      }
+      
+      addChatMessage(details, 'agent');
+    }
+
+    // WebSocket for real-time updates
+    function connectWebSocket() {
+      const wsUrl = `ws://${window.location.host}/ws`;
+      ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        updateAgentStatus('connected');
+        addLog('WebSocket connected', 'success');
+      };
+
+      ws.onclose = () => {
+        updateAgentStatus('disconnected');
+        addLog('WebSocket disconnected', 'warning');
+        setTimeout(connectWebSocket, 5000);
+      };
+
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        handleWebSocketMessage(data);
+      };
+    }
+
+    function handleWebSocketMessage(data) {
+      switch (data.type) {
+        case 'test:start':
+          addLog(`Starting test: ${data.service}`, 'info');
+          updateServiceStatus(data.service, 'testing');
+          break;
+        case 'test:complete':
+          addLog(`Test complete: ${data.service} - ${data.status}`, data.status === 'connected' ? 'success' : 'error');
+          updateServiceStatus(data.service, data.status);
+          break;
+        case 'production-check:start':
+          addLog(`Production check started for ${data.serviceCount} services`, 'info');
+          break;
+        case 'production-check:complete':
+          showProductionResults(data);
+          break;
+        case 'agent:message':
+          addChatMessage(data.message, 'agent');
+          break;
+      }
+    }
+
+    // Service Management
+    async function loadServices() {
+      try {
+        const response = await fetch(`${API_BASE}/api/services`);
+        services = await response.json();
+        renderServices();
+      } catch (err) {
+        addLog('Failed to load services', 'error');
+        // Use default services
+        services = [
+          { name: 'Backend', url: 'http://localhost:8000', status: 'unknown' },
+          { name: 'Cockpit', url: 'https://localhost:9090', status: 'unknown' },
+          { name: 'Agent API', url: 'http://localhost:8000/free-coding-agent/run', status: 'unknown' }
+        ];
+        renderServices();
+      }
+    }
+
+    function renderServices() {
+      const container = document.getElementById('serviceList');
+      container.innerHTML = services.map(s => `
+        <div class="service-item ${s.status}" data-service="${s.name}" onclick="selectService('${s.name}')">
+          <div class="service-name">${s.name}</div>
+          <div class="service-url">${s.url}</div>
+          <div class="service-status">
+            <span class="status-dot ${s.status}"></span>
+            ${s.status.toUpperCase()}
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function updateServiceStatus(name, status) {
+      const service = services.find(s => s.name === name);
+      if (service) {
+        service.status = status;
+        renderServices();
+      }
+    }
+
+    function selectService(name) {
+      document.querySelectorAll('.service-item').forEach(el => el.classList.remove('active'));
+      document.querySelector(`[data-service="${name}"]`)?.classList.add('active');
+    }
+
+    // Testing Functions
+    async function runAllTests() {
+      addChatMessage('Running full production check on all services...', 'agent');
+      addLog('Starting production check', 'info');
+
+      try {
+        const response = await fetch(`${API_BASE}/api/test/production`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+        const result = await response.json();
+        showProductionResults(result);
+      } catch (err) {
+        addLog('Production check failed: ' + err.message, 'error');
+        addChatMessage('❌ Production check failed. Check the logs for details.', 'agent');
+      }
+    }
+
+    async function testCockpit() {
+      const service = services.find(s => s.name.toLowerCase().includes('cockpit'));
+      if (!service) {
+        addChatMessage('Cockpit service not found in configuration', 'agent');
+        return;
+      }
+      
+      addChatMessage(`Testing Cockpit at ${service.url}...`, 'agent');
+      await testService(service.name, service.url);
+    }
+
+    async function testBackend() {
+      const service = services.find(s => s.name.toLowerCase().includes('backend'));
+      if (!service) {
+        addChatMessage('Backend service not found in configuration', 'agent');
+        return;
+      }
+      
+      addChatMessage(`Testing Backend at ${service.url}...`, 'agent');
+      await testService(service.name, service.url);
+    }
+
+    async function testService(name, url) {
+      try {
+        const response = await fetch(`${API_BASE}/api/test/service`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, url })
+        });
+        const result = await response.json();
+        
+        updateServiceStatus(name, result.status);
+        
+        const message = result.status === 'connected' 
+          ? `✅ ${name} is working! (${result.responseTime}ms)`
+          : `❌ ${name} failed: ${result.error || 'Connection failed'}`;
+        
+        addChatMessage(message, 'agent');
+        
+        if (result.screenshot) {
+          showScreenshot(result.screenshot);
+        }
+      } catch (err) {
+        updateServiceStatus(name, 'error');
+        addChatMessage(`❌ Test error for ${name}: ${err.message}`, 'agent');
+      }
+    }
+
+    function showProductionResults(data) {
+      const container = document.getElementById('resultsList');
+      const overlay = document.getElementById('testResults');
+      
+      container.innerHTML = data.services.map(s => `
+        <div class="result-item ${s.status === 'connected' ? 'pass' : 'fail'}">
+          <strong>${s.service}</strong><br>
+          Status: ${s.status}<br>
+          Time: ${s.responseTime}ms<br>
+          ${s.error ? `Error: ${s.error}` : 'Test passed'}
+        </div>
+      `).join('');
+      
+      overlay.classList.add('show');
+      
+      const summary = data.productionReady 
+        ? '✅ All systems operational - PRODUCTION READY'
+        : `❌ ${data.services.filter(s => s.status !== 'connected').length} service(s) failed`;
+      
+      addChatMessage(summary, 'agent');
+    }
+
+    // Chat Functions
+    function sendMessage() {
+      const input = document.getElementById('chatInput');
+      const message = input.value.trim();
+      
+      if (!message) return;
+      
+      addChatMessage(message, 'user');
+      input.value = '';
+      
+      // Process command
+      processCommand(message);
+    }
+
+    async function processCommand(message) {
+      // Simple command parsing
+      const lowerMsg = message.toLowerCase();
+      
+      if (lowerMsg.includes('test all') || lowerMsg.includes('check all')) {
+        await runAllTests();
+      } else if (lowerMsg.includes('test cockpit') || lowerMsg.includes('check cockpit')) {
+        await testCockpit();
+      } else if (lowerMsg.includes('test backend') || lowerMsg.includes('check backend')) {
+        await testBackend();
+      } else if (lowerMsg.includes('status') || lowerMsg.includes('health')) {
+        await checkOverallStatus();
+      } else if (lowerMsg.includes('clear') || lowerMsg.includes('reset')) {
+        clearLogs();
+        addChatMessage('Logs cleared', 'agent');
+      } else {
+        // Send to agent for processing
+        try {
+          const response = await fetch(`${API_BASE}/api/agent/chat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message })
+          });
+          const result = await response.json();
+          addChatMessage(result.response, 'agent');
+        } catch (err) {
+          addChatMessage('I\'m here and ready to help. What would you like me to test?', 'agent');
+        }
+      }
+    }
+
+    function addChatMessage(text, sender) {
+      const container = document.getElementById('chatMessages');
+      const time = new Date().toLocaleTimeString();
+      
+      const div = document.createElement('div');
+      div.className = `message ${sender}`;
+      div.innerHTML = `
+        <div class="message-header">${sender === 'user' ? 'You' : 'Agent'} • ${time}</div>
+        ${text}
+      `;
+      
+      container.appendChild(div);
+      container.scrollTop = container.scrollHeight;
+    }
+
+    // Log Functions
+    function addLog(message, type = 'info') {
+      const container = document.getElementById('logs');
+      const time = new Date().toLocaleTimeString();
+      
+      const div = document.createElement('div');
+      div.innerHTML = `<span class="log-time">${time}</span> <span class="log-type ${type}">[${type.toUpperCase()}]</span> ${message}`;
+      container.appendChild(div);
+      container.scrollTop = container.scrollHeight;
+    }
+
+    function updateAgentStatus(status) {
+      const dot = document.getElementById('agentStatus');
+      const text = document.getElementById('agentStatusText');
+      
+      dot.className = 'status-dot';
+      if (status === 'connected') {
+        dot.classList.add('connected');
+        text.textContent = 'Connected';
+      } else if (status === 'testing') {
+        dot.classList.add('testing');
+        text.textContent = 'Testing...';
+      } else {
+        text.textContent = 'Disconnected';
+      }
+    }
+
+    function clearLogs() {
+      document.getElementById('logs').innerHTML = '';
+      document.getElementById('resultsList').innerHTML = '';
+      document.getElementById('testResults').classList.remove('show');
+    }
+
+    function showScreenshot(base64Image) {
+      // Show screenshot in browser view
+      const browserView = document.getElementById('browserView');
+      browserView.innerHTML = `
+        <img src="data:image/png;base64,${base64Image}" alt="Browser screenshot" style="width:100%; height:100%; object-fit:contain;">
+      `;
+    }
+
+    function runProductionCheck() {
+      runAllTests();
+    }
+
+    function checkOverallStatus() {
+      const response = fetch(`${API_BASE}/api/test/history`)
+        .then(r => r.json())
+        .then(history => {
+          if (history.length > 0) {
+            const lastTest = history[history.length - 1];
+            addChatMessage(`Last test: ${lastTest.service} - ${lastTest.status} (${lastTest.responseTime}ms)`, 'agent');
+          } else {
+            addChatMessage('No tests have been run yet', 'agent');
+          }
+        })
+        .catch(err => {
+          addChatMessage('Could not retrieve test history', 'agent');
+        });
+    }
+  </script>
+</body>
+</html>

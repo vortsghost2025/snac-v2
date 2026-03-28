@@ -1,0 +1,18 @@
+{
+  "input": "test multiple paths robust",
+  "options": {
+    "metadata": {
+      "files": [
+        "S:\\snac-v2\\snac-v2\\backend/README_CLAWHUB.md",
+        "C:/Windows/System32/drivers/etc/hosts",
+        "we/pcm/core/VectorIndex.js",
+        {
+          "path": "S:\\snac-v2\\snac-v2\\backend/we/pcm/core/VectorIndex.js",
+          "name": "vector"
+        },
+        "\\\\server\\share\\file.txt",
+        "D:/some/other/project/file.txt"
+      ]
+    }
+  }
+}

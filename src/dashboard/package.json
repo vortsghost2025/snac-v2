@@ -1,0 +1,23 @@
+{
+  "name": "snac-dashboard",
+  "version": "1.0.0",
+  "description": "Real-time dashboard for SNAC v2 multi-agent system",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "ws": "^8.13.0"
+  },
+  "keywords": [
+    "snac",
+    "dashboard",
+    "websocket",
+    "multi-agent",
+    "real-time"
+  ],
+  "author": "SNAC Development Team",
+  "license": "MIT"
+}

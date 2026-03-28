@@ -1,0 +1,14 @@
+# Normalize line endings and treat common text files as text
+* text=auto
+
+# Ensure shell scripts keep LF
+*.sh eol=lf
+
+# PowerShell files should use CRLF on Windows editors
+*.ps1 eol=crlf
+
+# Lock binary files
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary

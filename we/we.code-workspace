@@ -1,0 +1,23 @@
+{
+	"folders": [
+		{
+			"name": "we",
+			"path": ".."
+		},
+		{
+			"path": "../.."
+		},
+		{
+			"path": "../../../../../../../../autonomous-elasticsearch-evolution-agent"
+		},
+		{
+			"path": "S:/"
+		},
+		{
+			"path": "S:/kilocode"
+		}
+	],
+	"settings": {
+		"powershell.cwd": "we"
+	}
+}

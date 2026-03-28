@@ -1,0 +1,44 @@
+# ---------------------------------------------------------
+# 1️⃣  Builder – compile CUDA kernels, install GPU libs
+# ---------------------------------------------------------
+FROM nvidia/cuda:12.1-devel-ubuntu22.04 AS builder
+WORKDIR /app
+
+# System deps
+RUN apt-get update && apt-get install -y \
+    build-essential git curl python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Node 20
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs
+
+# Copy source
+COPY . .
+
+# Compile custom CUDA kernel (optional)
+RUN mkdir -p build
+RUN nvcc -Xcompiler -fPIC -shared -o build/libmetabolism.so src/cuda/metabolism.cu || echo "CUDA kernel compilation failed, continuing..."
+
+# Install Node deps (including tfjs‑node‑gpu)
+RUN npm ci
+
+# ---------------------------------------------------------
+# 2️⃣  Runtime – minimal image, GPU runtime only
+# ---------------------------------------------------------
+FROM nvidia/cuda:12.1-runtime-ubuntu22.04 AS runtime
+WORKDIR /app
+
+COPY --from=builder /app/package*.json ./
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/build/libmetabolism.so ./build/ 2>/dev/null || echo "No CUDA kernel built, continuing without GPU acceleration"
+COPY --from=builder /app/src ./src
+COPY --from=builder /app/server.js .
+COPY --from=builder /app/terminal-echo-bridge.js .
+COPY --from=builder /app/security-middleware.js .
+COPY --from=builder /app/utils ./utils
+COPY --from=builder /app/we ./we
+COPY --from=builder /app/.env.example ./.env
+
+EXPOSE 8000 7777
+CMD ["node", "server.js"]

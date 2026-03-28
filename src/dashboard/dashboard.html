@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SNAC v2 Dashboard</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      margin: 0;
+      padding: 20px;
+      background-color: #f5f7fa;
+      color: #333;
+    }
+    
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 30px;
+      padding-bottom: 15px;
+      border-bottom: 1px solid #e0e6ed;
+    }
+    
+    h1 {
+      color: #2c3e50;
+      margin: 0;
+    }
+    
+    .status-indicator {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      margin-right: 8px;
+    }
+    
+    .status-active {
+      background-color: #2ecc71;
+    }
+    
+    .status-idle {
+      background-color: #f39c12;
+    }
+    
+    .status-inactive {
+      background-color: #e74c3c;
+    }
+    
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 20px;
+      margin-bottom: 30px;
+    }
+    
+    .card {
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+      padding: 20px;
+    }
+    
+    .card h2 {
+      margin-top: 0;
+      color: #2c3e50;
+      font-size: 1.2em;
+      border-bottom: 1px solid #eee;
+      padding-bottom: 10px;
+    }
+    
+    .agent-card {
+      border-left: 4px solid #3498db;
+    }
+    
+    .coordination-card {
+      border-left: 4px solid #9b59b6;
+    }
+    
+    .system-card {
+      border-left: 4px solid #1abc9c;
+    }
+    
+    .agent-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+    
+    .agent-item {
+      padding: 10px 0;
+      border-bottom: 1px solid #f0f0f0;
+    }
+    
+    .agent-item:last-child {
+      border-bottom: none;
+    }
+    
+    .agent-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    
+    .agent-id {
+      font-weight: bold;
+      color: #2c3e50;
+    }
+    
+    .agent-status {
+      font-size: 0.9em;
+      color: #7f8c8d;
+    }
+    
+    .agent-zone {
+      font-size: 0.85em;
+      color: #95a5a6;
+      margin-top: 4px;
+    }
+    
+    .lock-item, .message-item {
+      padding: 8px 0;
+      border-bottom: 1px solid #f0f0f0;
+    }
+    
+    .lock-item:last-child, .message-item:last-child {
+      border-bottom: none;
+    }
+    
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 15px;
+      margin-top: 15px;
+    }
+    
+    .metric {
+      background: #f8f9fa;
+      padding: 12px;
+      border-radius: 6px;
+      text-align: center;
+    }
+    
+    .metric-value {
+      font-size: 1.5em;
+      font-weight: bold;
+      color: #3498db;
+    }
+    
+    .metric-label {
+      font-size: 0.85em;
+      color: #7f8c8d;
+    }
+    
+    .connection-status {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      padding: 10px 15px;
+      border-radius: 4px;
+      background: #e74c3c;
+      color: white;
+      font-weight: bold;
+      opacity: 0.9;
+    }
+    
+    .connection-status.connected {
+      background: #2ecc71;
+    }
+    
+    footer {
+      margin-top: 30px;
+      text-align: center;
+      color: #7f8c8d;
+      font-size: 0.9em;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>SNAC v2 Dashboard</h1>
+      <div id="connection-status" class="connection-status">Connecting...</div>
+    </header>
+    
+    <div class="grid">
+      <!-- Agent Status Card -->
+      <div class="card agent-card">
+        <h2>Agent Status</h2>
+        <ul id="agent-list" class="agent-list">
+          <!-- Agent items will be populated by JS -->
+        </ul>
+      </div>
+      
+      <!-- Coordination Status Card -->
+      <div class="card coordination-card">
+        <h2>Coordination Layer</h2>
+        <h3>Active Locks</h3>
+        <div id="locks-container">
+          <!-- Locks will be populated by JS -->
+        </div>
+        
+        <h3>Message Stats</h3>
+        <div id="messages-container">
+          <!-- Messages will be populated by JS -->
+        </div>
+      </div>
+      
+      <!-- System Metrics Card -->
+      <div class="card system-card">
+        <h2>System Metrics</h2>
+        <div class="metric-grid">
+          <div class="metric">
+            <div id="uptime" class="metric-value">-</div>
+            <div class="metric-label">Uptime (s)</div>
+          </div>
+          <div class="metric">
+            <div id="connections" class="metric-value">-</div>
+            <div class="metric-label">Active Connections</div>
+          </div>
+          <div class="metric">
+            <div id="heap-used" class="metric-value">-</div>
+            <div class="metric-label">Heap Used (MB)</div>
+          </div>
+          <div class="metric">
+            <div id="external-requests" class="metric-value">-</div>
+            <div class="metric-label">External Requests</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <footer>
+      SNAC v2 Multi-Agent System Dashboard • Real-time Monitoring
+    </footer>
+  </div>
+
+  <script>
+    // WebSocket connection
+    const ws = new WebSocket(`ws://${window.location.host}`);
+    const connectionStatus = document.getElementById('connection-status');
+    
+    ws.onopen = function() {
+      connectionStatus.textContent = 'Connected';
+      connectionStatus.className = 'connection-status connected';
+    };
+    
+    ws.onclose = function() {
+      connectionStatus.textContent = 'Disconnected';
+      connectionStatus.className = 'connection-status';
+    };
+    
+    ws.onerror = function(error) {
+      connectionStatus.textContent = 'Connection Error';
+      connectionStatus.className = 'connection-status';
+      console.error('WebSocket error:', error);
+    };
+    
+    ws.onmessage = function(event) {
+      const data = JSON.parse(event.data);
+      
+      if (data.type === 'INITIAL_STATUS' || data.type === 'STATUS_UPDATE') {
+        updateDashboard(data.data);
+      }
+    };
+    
+    function updateDashboard(status) {
+      // Update agent list
+      const agentList = document.getElementById('agent-list');
+      agentList.innerHTML = '';
+      
+      status.agents.forEach(agent => {
+        const agentItem = document.createElement('li');
+        agentItem.className = 'agent-item';
+        
+        const statusClass = agent.status.toLowerCase().includes('idle') ? 'status-idle' : 
+                          agent.status.toLowerCase().includes('active') || agent.status.toLowerCase().includes('ready') ? 'status-active' : 'status-inactive';
+        
+        agentItem.innerHTML = `
+          <div class="agent-header">
+            <span class="agent-id">${agent.id}</span>
+            <span class="agent-status">
+              <span class="status-indicator ${statusClass}"></span>
+              ${agent.status}
+            </span>
+          </div>
+          <div class="agent-zone">Zone: ${agent.zone}</div>
+          <div class="agent-lastseen">Last seen: ${new Date(agent.lastSeen).toLocaleString()}</div>
+        `;
+        
+        agentList.appendChild(agentItem);
+      });
+      
+      // Update system metrics
+      document.getElementById('uptime').textContent = Math.round(status.system.uptime);
+      document.getElementById('connections').textContent = status.system.activeConnections;
+      document.getElementById('heap-used').textContent = Math.round(status.system.memory.heapUsed / 1024 / 1024);
+      
+      // Update locks
+      const locksContainer = document.getElementById('locks-container');
+      locksContainer.innerHTML = '';
+      
+      if (status.coordination.locks && status.coordination.locks.locks) {
+        for (const [path, lock] of Object.entries(status.coordination.locks.locks)) {
+          if (lock.owner) {
+            const lockItem = document.createElement('div');
+            lockItem.className = 'lock-item';
+            lockItem.innerHTML = `
+              <strong>${lock.owner}</strong><br>
+              <small>${path}</small><br>
+              <small>Since: ${lock.since ? new Date(lock.since).toLocaleTimeString() : 'N/A'}</small>
+            `;
+            locksContainer.appendChild(lockItem);
+          }
+        }
+      } else {
+        locksContainer.innerHTML = '<em>No active locks</em>';
+      }
+      
+      // Update messages
+      const messagesContainer = document.getElementById('messages-container');
+      messagesContainer.innerHTML = '';
+      
+      if (status.coordination.messages) {
+        for (const [agent, stats] of Object.entries(status.coordination.messages)) {
+          const messageItem = document.createElement('div');
+          messageItem.className = 'message-item';
+          messageItem.innerHTML = `
+            <strong>${agent}</strong>: ${stats.messageCount} messages
+          `;
+          messagesContainer.appendChild(messageItem);
+        }
+      } else {
+        messagesContainer.innerHTML = '<em>No message stats available</em>';
+      }
+    }
+  </script>
+</body>
+</html>

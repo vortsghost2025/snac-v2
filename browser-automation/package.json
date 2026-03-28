@@ -1,0 +1,22 @@
+{
+  "name": "kilo-browser-agent",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "build": "tsc",
+    "test": "node test/run-tests.js"
+  },
+  "dependencies": {
+    "express": "^5.2.1",
+    "playwright": "^1.44.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.13.9",
+    "@types/ws": "^8.5.14",
+    "typescript": "^5.8.2"
+  }
+}

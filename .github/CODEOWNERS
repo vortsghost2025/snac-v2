@@ -1,0 +1,17 @@
+# CODEOWNERS - assign ownership for critical paths
+# Replace the placeholders with real GitHub usernames or teams for your org.
+
+# Docs and guides
+docs/ @repo-maintainers
+
+# PCM (cognitive mesh) core
+we/pcm/ @pcm-team
+
+# Backend server and APIs
+backend/ @backend-team
+
+# Browser automation and agents
+browser-automation/ @automation-team
+
+# Default fallback owners
+* @repo-maintainers
