@@ -6,8 +6,8 @@ const AGENT_STATES = { IDLE: 'idle', WORKING: 'working', WAITING: 'waiting', BLO
 
 class Agent {
   constructor(options = {}) {
-    this.id = options.id || ;
-    this.name = options.name || ;
+    this.id = options.id || crypto.randomUUID();
+    this.name = options.name || `agent_${crypto.randomUUID().slice(0, 8)}`;
     this.role = options.role || AGENT_ROLES.WORKER;
     this.state = AGENT_STATES.IDLE;
     this.currentTask = null;
@@ -23,8 +23,8 @@ class Agent {
   canAcceptTask() { return this.state !== AGENT_STATES.OFFLINE && this.state !== AGENT_STATES.BLOCKED && this.capacity.currentLoad < this.capacity.maxConcurrent; }
 
   async assignTask(task) {
-    if (!this.canAcceptTask()) return { accepted: false, reason:  };
-    this.currentTask = { id: task.id || , type: task.type, input: task.input, context: task.context || [], priority: task.priority ?? 0.5, assignedAt: Date.now(), deadline: task.deadline || null };
+    if (!this.canAcceptTask()) return { accepted: false, reason: 'Agent unavailable' };
+    this.currentTask = { id: task.id || crypto.randomUUID(), type: task.type, input: task.input, context: task.context || [], priority: task.priority ?? 0.5, assignedAt: Date.now(), deadline: task.deadline || null };
     this.state = AGENT_STATES.WORKING;
     this.capacity.currentLoad++;
     return { accepted: true, taskId: this.currentTask.id };
@@ -71,7 +71,7 @@ class Agent {
       const response = await this.processor.process({ input, context: this.context.caps.map(c => c.content).join('\n---\n'), role: 'worker', instruction: 'Process this task.' });
       return { type: 'observation', content: response, caps: this.extractInsights(response) };
     }
-    return { type: 'observation', content: , caps: [] };
+    return { type: 'observation', content: 'No processor assigned', caps: [] };
   }
 
   async processAsCritic() {
@@ -90,7 +90,7 @@ class Agent {
       const response = await this.processor.process({ input: sources.join('\n\n---\n\n'), context: this.context.caps.join('\n---\n'), role: 'integrator', instruction: 'Synthesize.' });
       return { type: 'synthesis', content: response, connections: [], caps: this.extractInsights(response) };
     }
-    return { type: 'synthesis', content: , connections: [], caps: [] };
+    return { type: 'synthesis', content: 'No processor assigned', connections: [], caps: [] };
   }
 
   async processAsCoordinator() { return { type: 'coordination', routing: this.currentTask.input, delegations: [] }; }
@@ -125,7 +125,7 @@ class Agent {
 
   getHealth() {
     const now = Date.now();
-    return { id: this.id, role: this.role, state: this.state, load: , tasksCompleted: this.stats.tasksCompleted, healthy: this.state !== AGENT_STATES.BLOCKED && this.state !== AGENT_STATES.OFFLINE };
+    return { id: this.id, role: this.role, state: this.state, load: this.capacity.currentLoad, tasksCompleted: this.stats.tasksCompleted, healthy: this.state !== AGENT_STATES.BLOCKED && this.state !== AGENT_STATES.OFFLINE };
   }
 
   toJSON() { return { id: this.id, name: this.name, role: this.role, state: this.state, stats: this.stats, capacity: this.capacity }; }

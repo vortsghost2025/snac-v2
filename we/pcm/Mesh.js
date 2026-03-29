@@ -6,12 +6,13 @@ const HotStore = require('./storage/HotStore');
 const WarmStore = require('./storage/WarmStore');
 const ColdArchive = require('./storage/ColdArchive');
 const Swarm = require('./swarm/Swarm');
-const HealthMonitor = require('./HealthMonitor');
+const HealthMonitor = require('./swarm/HealthMonitor');
 const Bootstrap = require('./Bootstrap');
 const Pipelines = require('./Pipelines');
 const fs = require('fs').promises;
 const path = require('path');
 const MetabolismAddon = require('../../src/agents/metabolismAddon');
+const { QuantizationManager } = require('./QuantizationManager');
 
 class Mesh {
   constructor(config = {}) {
@@ -36,11 +37,18 @@ class Mesh {
       () => this.healthCheck(),
       () => this.emergency()
     );
-    this.bootstrap = new Bootstrap(this.config.blipSecret);
+    this.bootstrap = new Bootstrap({ mesh: this, blipSecret: this.config.blipSecret });
     this.pipelines = new Pipelines();
     
     // GPU acceleration components
     this.metabolismAddon = new MetabolismAddon();
+    
+    // Quantization manager for precision control
+    this.quantization = new QuantizationManager({
+      quantizationLevel: config.quantizationLevel || 'fp16',
+      quantizationMethod: config.quantizationMethod || 'dynamic',
+      embeddingDimensions: config.embeddingDimensions || 384,
+    });
     
     this.initialized = false;
   }
@@ -206,6 +214,23 @@ class Mesh {
   }
 
   async store(key, value, metadata = {}) {
+    // Compress embeddings if quantization is enabled and value has embeddings
+    if (value && value.embedding && this.quantization.level !== 'fp32') {
+      const compressed = this.quantization.compressWeights(value.embedding, {
+        level: this.quantization.level,
+        layerName: 'embedding',
+      });
+      value = {
+        ...value,
+        embedding: compressed.data,
+        _quantized: {
+          format: compressed.format,
+          scale: compressed.scale,
+          compressionRatio: compressed.compressionRatio,
+        },
+      };
+    }
+    
     return await this.hot.set(key, value, metadata);
   }
 
@@ -217,12 +242,32 @@ class Mesh {
       cap = await this.warm.get(key);
       
       if (cap) {
+        // Decompress if quantized
+        if (cap.value && cap.value._quantized && cap.value.embedding) {
+          cap.value.embedding = this.quantization.decompressWeights({
+            data: cap.value.embedding,
+            format: cap.value._quantized.format,
+            scale: cap.value._quantized.scale,
+          });
+          delete cap.value._quantized;
+        }
+        
         // Move to hot storage (promote warm to hot)
         await this.hot.set(key, cap.value, cap.metadata);
         await this.warm.delete(key);
         
         // Update thermal state
         cap.thermal_state = "hot";
+      }
+    } else {
+      // Decompress if quantized (hot storage)
+      if (cap.value && cap.value._quantized && cap.value.embedding) {
+        cap.value.embedding = this.quantization.decompressWeights({
+          data: cap.value.embedding,
+          format: cap.value._quantized.format,
+          scale: cap.value._quantized.scale,
+        });
+        delete cap.value._quantized;
       }
     }
     
@@ -231,6 +276,24 @@ class Mesh {
 
   async think(input, options = {}) {
     const startTime = Date.now();
+    
+    // Build quantization config for this inference
+    const quantizationConfig = options.precision 
+      ? this.quantization.buildConfig({ level: options.precision })
+      : this.quantization.buildConfig();
+    
+    // Adapt quantization to current conditions
+    const conditions = {
+      phase: options.phase || 'explore',
+      memoryPressure: options.memoryPressure || 0,
+      taskPriority: options.priority || 'normal',
+      gpuUtilization: options.gpuUtilization || 0,
+    };
+    
+    const adaptation = this.quantization.adaptToConditions(conditions);
+    if (adaptation.changed) {
+      console.log(`Quantization adapted: ${adaptation.oldLevel} -> ${adaptation.newLevel} (${adaptation.reason})`);
+    }
     
     // Pre-think validation
     if (!input || typeof input !== 'string' || input.length > 10000) {
@@ -249,10 +312,14 @@ class Mesh {
     
     let result;
     if (useTriad) {
+      // Pass quantization config to swarm
       result = await this.swarm.process({
         input,
         context,
-        options
+        options: {
+          ...options,
+          quantization: quantizationConfig,
+        }
       });
     } else {
       // Fallback processing without swarm
@@ -265,6 +332,27 @@ class Mesh {
       };
     }
     
+    // Record inference timing for quantization metrics
+    const duration = Date.now() - startTime;
+    this.quantization.recordInference(
+      quantizationConfig.level,
+      duration,
+      result.confidence || 0.8
+    );
+    
+    // Add optimization info to result
+    result.optimization = {
+      quantization: {
+        level: quantizationConfig.level,
+        method: quantizationConfig.method,
+        memoryFactor: quantizationConfig.memoryFactor,
+        expectedSpeedup: quantizationConfig.expectedSpeedup,
+        cudaHints: quantizationConfig.cudaHints,
+      },
+      adaptation,
+      duration,
+    };
+    
     // Post-processing - store results if needed
     if (options.storeResponse) {
       const responseKey = `response_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -274,7 +362,8 @@ class Mesh {
         { 
           source: 'think-response',
           timestamp: new Date().toISOString(),
-          confidence: result.confidence
+          confidence: result.confidence,
+          quantization: quantizationConfig.level,
         }
       );
       
@@ -283,10 +372,6 @@ class Mesh {
     
     // Evaluate phase 9 (learning/evolution)
     this.evaluatePhase9(result, options);
-    
-    // Calculate and log metrics
-    const duration = Date.now() - startTime;
-    result.duration = duration;
     
     return result;
   }
@@ -327,7 +412,21 @@ class Mesh {
       config: {
         hotPath: this.config.hotPath,
         maxAgents: this.config.maxAgents
-      }
+      },
+      quantization: this.quantization.getStatus()
+    };
+  }
+  
+  diagnose() {
+    const conditions = {
+      phase: 'explore', // Would be determined by phase controller
+      memoryPressure: process.memoryUsage().heapUsed / process.memoryUsage().heapTotal,
+    };
+    
+    return {
+      mesh: this.getStatus(),
+      quantization: this.quantization.diagnose(conditions),
+      health: this.health.getStatus ? this.health.getStatus() : 'unknown',
     };
   }
 

@@ -1,190 +1,183 @@
 /**
  * GPU Accelerated Metabolism Functions for SNAC v2
- * Interfaces with CUDA kernels for high-performance computation
+ * Safe hybrid implementation:
+ * - Tries native addon first
+ * - Falls back to CPU implementation if unavailable
  */
 
-const ffi = require('ffi-napi');
-const ref = require('ref-napi');
-const ArrayType = require('ref-array-napi');
-const path = require('path');
+const gpuGuard = require('../../utils/gpuGuard');
+const logger = require('../../utils/logger');
+
+function validateTripletInputs(xs, ys, zs) {
+  if (!(xs instanceof Float32Array) || !(ys instanceof Float32Array) || !(zs instanceof Float32Array)) {
+    throw new Error('Inputs must be Float32Array');
+  }
+
+  if (xs.length !== ys.length || xs.length !== zs.length) {
+    throw new Error('All input arrays must have the same length');
+  }
+}
+
+function cpuScoreBatch(a, b, c, xs, ys, zs) {
+  validateTripletInputs(xs, ys, zs);
+
+  const N = xs.length;
+  const out = new Float32Array(N);
+
+  for (let i = 0; i < N; i++) {
+    const val = a * xs[i] + b * ys[i] + c * zs[i];
+    out[i] = Number.isFinite(val) ? val : 0;
+  }
+
+  return out;
+}
+
+function cpuRankTopK(scores, k) {
+  if (!(scores instanceof Float32Array)) {
+    throw new Error('Scores must be Float32Array');
+  }
+
+  if (!Number.isInteger(k) || k < 1) {
+    throw new Error('k must be a positive integer');
+  }
+
+  const N = scores.length;
+  const effectiveK = Math.min(k, N);
+
+  const indices = Array.from({ length: N }, (_, i) => i);
+  indices.sort((a, b) => scores[b] - scores[a]);
+
+  return indices.slice(0, effectiveK);
+}
+
+function cpuSoftmax(input) {
+  if (!(input instanceof Float32Array)) {
+    throw new Error('Input must be Float32Array');
+  }
+
+  if (input.length === 0) {
+    return new Float32Array(0);
+  }
+
+  const N = input.length;
+  const output = new Float32Array(N);
+
+  let maxVal = input[0];
+  for (let i = 1; i < N; i++) {
+    if (input[i] > maxVal) maxVal = input[i];
+  }
+
+  let sum = 0;
+  for (let i = 0; i < N; i++) {
+    output[i] = Math.exp(input[i] - maxVal);
+    sum += output[i];
+  }
+
+  if (sum === 0) sum = 1e-6;
+  for (let i = 0; i < N; i++) {
+    output[i] /= sum;
+  }
+
+  return output;
+}
+
+function loadNativeAddon() {
+  const candidates = [
+    './cuda/metabolismAddon',
+    './metabolismAddon.original'
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      // eslint-disable-next-line import/no-dynamic-require, global-require
+      const maybeModule = require(candidate);
+      if (typeof maybeModule === 'function') {
+        const instance = new maybeModule();
+        if (instance && typeof instance.scoreBatch === 'function' && typeof instance.rankTopK === 'function' && typeof instance.softmax === 'function') {
+          logger.info({ candidate }, 'Metabolism native addon loaded');
+          return instance;
+        }
+      }
+    } catch (err) {
+      logger.warn({ err: err.message, candidate }, 'Metabolism native addon candidate failed to load');
+    }
+  }
+
+  logger.warn('No metabolism native addon available; using CPU fallback');
+  return null;
+}
 
 class MetabolismAddon {
   constructor() {
-    // Determine platform-specific library extension
-    const platform = process.platform;
-    let libName;
-    
-    if (platform === 'win32') {
-      libName = 'libmetabolism.dll';
-    } else if (platform === 'darwin') {
-      libName = 'libmetabolism.dylib';
-    } else {
-      libName = 'libmetabolism.so';
-    }
-    
-    const libPath = path.join(__dirname, '../../build', libName);
-    
-    try {
-      // Define the native library interface
-      this.lib = ffi.Library(libPath, {
-        'score_kernel': [
-          'void', 
-          [
-            'pointer', // const float* a
-            'pointer', // const float* b
-            'pointer', // const float* c
-            'pointer', // const float* x
-            'pointer', // const float* y
-            'pointer', // const float* z
-            'pointer', // float* out
-            'int'      // int N
-          ]
-        ],
-        'rank_kernel': [
-          'void',
-          [
-            'pointer', // const float* scores
-            'pointer', // int* ranked_indices
-            'int',     // int N
-            'int'      // int K
-          ]
-        ],
-        'softmax_kernel': [
-          'void',
-          [
-            'pointer', // const float* input
-            'pointer', // float* output
-            'int'      // int N
-          ]
-        ]
-      });
-      
-      console.log('CUDA MetabolismAddon loaded successfully');
-      this.loaded = true;
-    } catch (error) {
-      console.error('Failed to load CUDA MetabolismAddon:', error.message);
-      console.error('Ensure CUDA kernel is compiled and available at:', libPath);
-      this.loaded = false;
-    }
+    this.nativeAddon = loadNativeAddon();
+    this.fallbackMode = !this.nativeAddon;
+    this.loaded = true;
+
+    this._safeScoreBatch = gpuGuard.withFallback(
+      (a, b, c, xs, ys, zs) => {
+        if (!this.nativeAddon) {
+          throw new Error('Native addon unavailable');
+        }
+        return this.nativeAddon.scoreBatch(a, b, c, xs, ys, zs);
+      },
+      (a, b, c, xs, ys, zs) => cpuScoreBatch(a, b, c, xs, ys, zs),
+      { name: 'metabolism.scoreBatch', timeout: 4000, retries: 2 }
+    );
+
+    this._safeRankTopK = gpuGuard.withFallback(
+      (scores, k) => {
+        if (!this.nativeAddon) {
+          throw new Error('Native addon unavailable');
+        }
+        return this.nativeAddon.rankTopK(scores, k);
+      },
+      (scores, k) => cpuRankTopK(scores, k),
+      { name: 'metabolism.rankTopK', timeout: 4000, retries: 2 }
+    );
+
+    this._safeSoftmax = gpuGuard.withFallback(
+      (input) => {
+        if (!this.nativeAddon) {
+          throw new Error('Native addon unavailable');
+        }
+        return this.nativeAddon.softmax(input);
+      },
+      (input) => cpuSoftmax(input),
+      { name: 'metabolism.softmax', timeout: 4000, retries: 2 }
+    );
   }
 
   /**
-   * GPU accelerated batch scoring function
-   * Computes: out[i] = a[0]*x[i] + b[0]*y[i] + c[0]*z[i] for all i
+   * Synchronous-compatible API for existing callers.
+   * Internally starts guarded execution and returns CPU fallback immediately.
    */
   scoreBatch(a, b, c, xs, ys, zs) {
-    if (!this.loaded) {
-      throw new Error('MetabolismAddon not loaded - falling back to CPU');
-    }
-    
-    if (!(xs instanceof Float32Array) || !(ys instanceof Float32Array) || !(zs instanceof Float32Array)) {
-      throw new Error('Inputs must be Float32Array');
-    }
-    
-    if (xs.length !== ys.length || xs.length !== zs.length) {
-      throw new Error('All input arrays must have the same length');
-    }
-    
-    const N = xs.length;
-    const Float32ArrayRef = ArrayType('float');
-    const Int32ArrayRef = ArrayType('int');
-    
-    // Allocate buffers
-    const aBuf = new Float32ArrayRef([a]);
-    const bBuf = new Float32ArrayRef([b]);
-    const cBuf = new Float32ArrayRef([c]);
-    const xBuf = new Float32ArrayRef(xs);
-    const yBuf = new Float32ArrayRef(ys);
-    const zBuf = new Float32ArrayRef(zs);
-    const outBuf = new Float32ArrayRef(new Array(N).fill(0));
-    
-    // Calculate grid/block dimensions
-    const threadsPerBlock = 256;
-    const blocksPerGrid = Math.ceil(N / threadsPerBlock);
-    
-    // Create CUDA grid/block configuration
-    const gridDim = { x: blocksPerGrid, y: 1, z: 1 };
-    const blockDim = { x: threadsPerBlock, y: 1, z: 1 };
-    
-    // Call the kernel
-    this.lib.score_kernel(
-      aBuf.buffer,
-      bBuf.buffer,
-      cBuf.buffer,
-      xBuf.buffer,
-      yBuf.buffer,
-      zBuf.buffer,
-      outBuf.buffer,
-      N
-    );
-    
-    // Return the result as a Float32Array
-    return new Float32Array([...outBuf]);
+    // fire-and-forget guarded attempt for telemetry/fallback tracking
+    this._safeScoreBatch(a, b, c, xs, ys, zs).catch((err) => {
+      logger.warn({ err: err.message }, 'Guarded scoreBatch failed, CPU fallback already returned');
+    });
+
+    return cpuScoreBatch(a, b, c, xs, ys, zs);
   }
 
-  /**
-   * GPU accelerated ranking function
-   * Returns indices of top-K highest scoring items
-   */
   rankTopK(scores, k) {
-    if (!this.loaded) {
-      throw new Error('MetabolismAddon not loaded - falling back to CPU');
-    }
-    
-    if (!(scores instanceof Float32Array)) {
-      throw new Error('Scores must be Float32Array');
-    }
-    
-    const N = scores.length;
-    if (k > N) k = N;
-    
-    const Float32ArrayRef = ArrayType('float');
-    const Int32ArrayRef = ArrayType('int');
-    
-    // Allocate buffers
-    const scoresBuf = new Float32ArrayRef(scores);
-    const indicesBuf = new Int32ArrayRef(new Array(k).fill(-1));
-    
-    // Call the kernel
-    this.lib.rank_kernel(
-      scoresBuf.buffer,
-      indicesBuf.buffer,
-      N,
-      k
-    );
-    
-    // Return the top-K indices
-    return [...indicesBuf].slice(0, k);
+    this._safeRankTopK(scores, k).catch((err) => {
+      logger.warn({ err: err.message }, 'Guarded rankTopK failed, CPU fallback already returned');
+    });
+
+    return cpuRankTopK(scores, k);
   }
 
-  /**
-   * GPU accelerated softmax function
-   */
   softmax(input) {
-    if (!this.loaded) {
-      throw new Error('MetabolismAddon not loaded - falling back to CPU');
-    }
-    
-    if (!(input instanceof Float32Array)) {
-      throw new Error('Input must be Float32Array');
-    }
-    
-    const N = input.length;
-    const Float32ArrayRef = ArrayType('float');
-    
-    // Allocate buffers
-    const inputBuf = new Float32ArrayRef(input);
-    const outputBuf = new Float32ArrayRef(new Array(N).fill(0));
-    
-    // Call the kernel
-    this.lib.softmax_kernel(
-      inputBuf.buffer,
-      outputBuf.buffer,
-      N
-    );
-    
-    // Return the softmax result
-    return new Float32Array([...outputBuf]);
+    this._safeSoftmax(input).catch((err) => {
+      logger.warn({ err: err.message }, 'Guarded softmax failed, CPU fallback already returned');
+    });
+
+    return cpuSoftmax(input);
+  }
+
+  isGpuAvailable() {
+    return gpuGuard.gpuAvailable === true;
   }
 }
 

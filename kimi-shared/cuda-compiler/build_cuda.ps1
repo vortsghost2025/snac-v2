@@ -1,7 +1,6 @@
 param()
 
-# Simple PowerShell wrapper to compile a CUDA sample if nvcc is available.
-# It is intentionally conservative: checks for files and tools and prints helpful hints.
+# PowerShell wrapper to compile a CUDA sample if nvcc is available.
 
 $workspace = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $repoRoot = Resolve-Path "$workspace\.." | Select-Object -ExpandProperty Path
@@ -37,11 +36,14 @@ if (-not (Test-Path $outDir)) { New-Item -ItemType Directory -Path $outDir | Out
 $exeName = Join-Path $outDir "cuda_sample.exe"
 
 try {
-  # Ensure nvcc sees the CUDA include (helps host compiler find nvtx headers)
-  # Enable verbose output and show MSVC include diagnostics to help debug missing nvtx headers
-  & nvcc -v -Xcompiler "/showIncludes" -I "S:\\CUDA\\include" -o $exeName $candidate 2>&1 | ForEach-Object { Write-Host $_ }
+  & nvcc -O3 -arch=sm_86 -o $exeName $candidate 2>&1 | ForEach-Object { Write-Host $_ }
+  
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host "nvcc returned exit code $LASTEXITCODE" -ForegroundColor Red
+    exit $LASTEXITCODE
+  }
 } catch {
-  Write-Host "nvcc invocation failed." -ForegroundColor Red
+  Write-Host "nvcc invocation failed: $_" -ForegroundColor Red
   exit 4
 }
 

@@ -38,9 +38,12 @@ __global__ void kernel_mul(float *data, int n, int iters) {
     }
 }
 
-__global__ void kernel_shared(float *data, int n, int iters, float *shared_data) {
+__global__ void kernel_shared(float *data, int n, int iters) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int local_idx = threadIdx.x;
+    
+    // Declare dynamic shared memory
+    extern __shared__ float shared_data[];
     
     // Copy to shared memory
     if (idx < n) {
@@ -86,16 +89,13 @@ void run_shared_benchmark(const char* name, float *d_data, int n, int threads, i
     dim3 blocks((n + threads - 1) / threads);
     dim3 threads_per_block(threads);
     
-    // Allocate shared memory
-    float *d_shared;
-    cudaMalloc(&d_shared, threads * sizeof(float));
-    
     cudaEvent_t start, stop;
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
     
     cudaEventRecord(start);
-    kernel_shared<<<blocks, threads_per_block>>>(d_data, n, iters, d_shared);
+    // Launch with dynamic shared memory allocation
+    kernel_shared<<<blocks, threads_per_block, threads * sizeof(float)>>>(d_data, n, iters);
     cudaEventRecord(stop);
     
     cudaEventSynchronize(stop);
@@ -106,7 +106,6 @@ void run_shared_benchmark(const char* name, float *d_data, int n, int threads, i
     printf("%-20s | threads=%3d | iters=%4d | %8.2f ms | %12.2f ops/sec | %8.3f us/op\n", 
            name, threads, iters, ms, ops / (ms / 1000.0), ms * 1000.0 / ops);
     
-    cudaFree(d_shared);
     cudaEventDestroy(start);
     cudaEventDestroy(stop);
 }

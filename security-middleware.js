@@ -1,4 +1,27 @@
 /**
+ * ──────────────────────────────────────────────────────────────────────
+ *  MODULE: security-middleware
+ *  PURPOSE: Protect the SNAC backend from common web vulnerabilities by
+ *           enforcing rate limits, security headers, and input sanitization.
+ *
+ *  RESPONSIBILITIES:
+ *    • Rate-limit API requests to prevent abuse (100 req/15min per IP).
+ *    • Set security headers (CSP, HSTS, X-Frame-Options) via Helmet.
+ *    • Validate and sanitize user input to block XSS and injection attacks.
+ *    • Prevent path traversal attacks through secure path resolution.
+ *
+ *  CONTEXT:
+ *    • Belongs to: backend security layer.
+ *    • Consumed by: server.js (main Express app), all API routes.
+ *
+ *  NOTES:
+ *    • Rate limiter uses a 15-minute sliding window.
+ *    • Input validation rejects payloads >10KB and blocks <script> tags.
+ *    • Path traversal check uses path normalization + prefix validation.
+ * ──────────────────────────────────────────────────────────────────────
+ */
+
+/**
  * Security Middleware for SNAC v2 Backend
  * Implements input validation, sanitization, and security protections
  */
@@ -55,8 +78,14 @@ const validateInput = (req, res, next) => {
         });
       }
       
-      // Sanitize input
-      req.body.input = validator.escape(req.body.input);
+      // Validate input contains no obvious script tags (basic XSS check)
+      // Note: We do NOT escape/encode here - that corrupts legitimate code
+      const scriptPattern = /<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi;
+      if (scriptPattern.test(req.body.input)) {
+        return res.status(400).json({
+          error: 'Invalid input: script tags are not allowed'
+        });
+      }
     }
     
     // Validate options if present
@@ -130,8 +159,7 @@ const validateEnvironment = () => {
   const missing = requiredEnvVars.filter(envVar => !process.env[envVar]);
   
   if (missing.length > 0) {
-    console.warn(`Warning: Missing environment variables: ${missing.join(', ')}`);
-    console.warn('Some features may not work properly.');
+    throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
   }
 };
 

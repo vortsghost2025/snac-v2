@@ -8,7 +8,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const os = require('os');
 
-// Define the command allowlist for agent mode (YOLO MODE - all commands allowed)
+// Define the command allowlist for agent mode
 const AGENT_COMMAND_ALLOWLIST = [
   'direct',
   'broadcast', 
@@ -46,7 +46,6 @@ const AGENT_COMMAND_ALLOWLIST = [
   'inspect'
 ];
 
-// Determine agent ID from environment or default
 class AgentChatCLI {
   constructor(agentId) {
     this.agentId = agentId;
@@ -57,12 +56,10 @@ class AgentChatCLI {
   }
 
   async initialize() {
-    // Create mailbox directory structure if it doesn't exist
     await fs.mkdir(this.mailboxDir, { recursive: true });
     await fs.mkdir(path.join(this.mailboxDir, this.agentId), { recursive: true });
   }
 
-  // Check if a command is allowed in agent mode
   isAllowedCommand(command) {
     return AGENT_COMMAND_ALLOWLIST.includes(command.toLowerCase());
   }
@@ -75,7 +72,6 @@ class AgentChatCLI {
     const parts = input.trim().split(/\s+/);
     const command = parts[0].toLowerCase();
     
-    // Check if command is in allowlist when running in agent mode
     if (!this.isAllowedCommand(command)) {
       return { 
         success: false, 
@@ -101,7 +97,7 @@ class AgentChatCLI {
       case 'shell':
       case 'cmd':
       case 'execute':
-        return await this.executeCommand(parts);
+        return await this.executeCommand(parts.slice(1));
       case 'read':
         return await this.readFile(parts.slice(1));
       case 'write':
@@ -155,43 +151,6 @@ class AgentChatCLI {
         };
     }
   }
-}
-
-async function main() {
-  // Initialize the message bus
-  await messageBus.initialize();
-  
-  const args = process.argv.slice(2);
-  const command = args[0];
-
-  if (!command) {
-    console.log('Usage: node agent-chat-cli.js <send|inbox|broadcast|count> [args...]');
-    return;
-  }
-
-  // Validate command against allowlist
-  if (!validateCommand(command)) {
-    return;
-  }
-
-  switch (command) {
-    case 'send':
-      await handleSend(args.slice(1));
-      break;
-    case 'inbox':
-      await handleInbox();
-      break;
-    case 'broadcast':
-      await handleBroadcast(args.slice(1));
-      break;
-    case 'count':
-      await handleCount();
-      break;
-    default:
-      console.log(`Unknown command: ${command}`);
-      console.log('Usage: node agent-chat-cli.js <send|inbox|broadcast|count> [args...]');
-  }
-}
 
   async sendDirect(args) {
     if (args.length < 2) {
@@ -205,7 +164,6 @@ async function main() {
       return { success: false, message: 'Invalid recipient or message' };
     }
 
-    // Validate recipient exists in dispatch
     const validRecipients = await this.getValidAgents();
     if (!validRecipients.includes(recipient)) {
       return { success: false, message: `Invalid recipient: ${recipient}` };
@@ -271,14 +229,35 @@ async function main() {
       from_cli: true
     };
 
-    // Send to all valid recipients except sender
     for (const recipient of validRecipients) {
       if (recipient !== this.agentId) {
         await this.deliverMessage(envelope, recipient);
       }
     }
 
-    return { success: true, message: `Broadcast message sent to all agents` };
+    return { success: true, message: 'Broadcast message sent to all agents' };
+  }
+
+  async sendGroup(args) {
+    if (args.length < 2) {
+      return { success: false, message: 'Usage: group <agent1>,<agent2> <message>' };
+    }
+    const recipients = args[0].split(',');
+    const message = args.slice(1).join(' ');
+    const validRecipients = await this.getValidAgents();
+    for (const r of recipients) {
+      if (!validRecipients.includes(r)) {
+        return { success: false, message: `Invalid recipient: ${r}` };
+      }
+    }
+    for (const r of recipients) {
+      await this.deliverMessage({
+        id: `${Date.now()}-group-${Math.random().toString(36).substr(2, 5)}`,
+        from: this.agentId, to: r, type: 'group',
+        message, timestamp: Date.now(), from_cli: true
+      }, r);
+    }
+    return { success: true, message: `Group message sent to ${recipients.join(', ')}` };
   }
 
   async listLocks() {
@@ -291,8 +270,8 @@ async function main() {
       }
 
       let message = 'Active locks:\n';
-      for (const [path, lockInfo] of Object.entries(locks.locks)) {
-        message += `- ${path}: owned by ${lockInfo.owner} (since ${new Date(lockInfo.since).toISOString()})\n`;
+      for (const [lockPath, lockInfo] of Object.entries(locks.locks)) {
+        message += `- ${lockPath}: owned by ${lockInfo.owner} (since ${new Date(lockInfo.since).toISOString()})\n`;
       }
 
       return { success: true, message: message };
@@ -301,7 +280,6 @@ async function main() {
     }
   }
 
-// Handle graceful shutdown
   async showHelp(args) {
     if (args.length === 0) {
       const helpText = `
@@ -315,44 +293,6 @@ AI-to-AI Chat Commands:
 - help                        Show this help message
 - help <command>              Show detailed help for a command
 
-System Commands:
-- run <command>               Execute a system command
-- exec <command>              Execute a command in the shell
-- shell <command>             Run shell commands
-- cmd <command>               Execute command in command line
-- execute <command>           Execute arbitrary command
-
-File Operations:
-- read <file_path>            Read a file
-- write <file_path> <content> Write content to a file
-- append <file_path> <content> Append content to a file
-- delete <file_path>          Delete a file
-- ls <directory>              List directory contents
-- mkdir <directory>           Create a directory
-- cp <source> <dest>          Copy a file
-- mv <source> <dest>          Move a file
-- find <pattern>              Find files matching a pattern
-
-Process Management:
-- ps                          List running processes
-- kill <pid>                  Kill a process by PID
-- stop <service>              Stop a service
-- start <service>             Start a service
-- restart <service>           Restart a service
-
-System Information:
-- info                        Show system information
-- mem                         Show memory usage
-- disk                        Show disk usage
-- cpu                         Show CPU usage
-- network                     Show network status
-
-Debugging:
-- log <message>               Add message to log
-- debug <component>           Debug a component
-- trace <operation>           Trace an operation
-- inspect <object>            Inspect an object
-
 Allowed commands in agent mode: ${AGENT_COMMAND_ALLOWLIST.join(', ')}
       `;
       return { success: true, message: helpText };
@@ -360,11 +300,11 @@ Allowed commands in agent mode: ${AGENT_COMMAND_ALLOWLIST.join(', ')}
       const command = args[0].toLowerCase();
       switch (command) {
         case 'direct':
-          return { success: true, message: 'Usage: direct <agent> <message>\nSend a direct message to a specific agent.\nExample: direct dev-lingma Please review the security implementation' };
+          return { success: true, message: 'Usage: direct <agent> <message>\nSend a direct message to a specific agent.' };
         case 'broadcast':
-          return { success: true, message: 'Usage: broadcast <message>\nSend a message to all agents.\nExample: broadcast Starting security audit' };
+          return { success: true, message: 'Usage: broadcast <message>\nSend a message to all agents.' };
         case 'group':
-          return { success: true, message: 'Usage: group <agent1>,<agent2>,... <message>\nSend a message to a group of agents.\nExample: group dev-lingma,dev-copilot Let\'s coordinate on the GPU implementation' };
+          return { success: true, message: "Usage: group <agent1>,<agent2>,... <message>\nSend a message to a group of agents." };
         case 'status':
           return { success: true, message: 'Usage: status <agent> or status all\nCheck the status of an agent or all agents' };
         case 'locks':
@@ -375,10 +315,10 @@ Allowed commands in agent mode: ${AGENT_COMMAND_ALLOWLIST.join(', ')}
     }
   }
 
-// Run the main function
-  // Placeholder implementations for all the new commands
+  // Stub implementations for system commands (not yet implemented)
   async executeCommand(args) {
-    return { success: true, message: `Command execution not fully implemented yet. Would run: ${args.join(' ')}` };
+    // SECURITY: Shell execution is disabled until proper sandboxing is implemented
+    return { success: false, message: 'Command execution is disabled for security. Implement sandboxed execution before enabling.' };
   }
 
   async readFile(args) {
@@ -492,7 +432,6 @@ Allowed commands in agent mode: ${AGENT_COMMAND_ALLOWLIST.join(', ')}
       
       if (!agentMatches) return [];
       
-      // Extract agent IDs from the matches
       return agentMatches
         .map(match => match.replace(/`\s*\|\s*$/, '').replace(/`/g, ''))
         .filter(id => id.startsWith('dev-'));
@@ -507,7 +446,6 @@ Allowed commands in agent mode: ${AGENT_COMMAND_ALLOWLIST.join(', ')}
       const statusFile = path.join(__dirname, `../../.agents/${agentId}.md`);
       const content = await fs.readFile(statusFile, 'utf8');
       
-      // Extract status from the markdown
       const statusMatch = content.match(/## Current Status: (.+)/);
       const status = statusMatch ? statusMatch[1] : 'Unknown';
       
@@ -516,7 +454,7 @@ Allowed commands in agent mode: ${AGENT_COMMAND_ALLOWLIST.join(', ')}
         status: status,
         lastUpdated: 'Unknown'
       };
-    } catch (err) {
+    } catch (err)      {
       return {
         agent: agentId,
         status: 'Error reading status',
@@ -528,23 +466,22 @@ Allowed commands in agent mode: ${AGENT_COMMAND_ALLOWLIST.join(', ')}
 }
 
 // Determine agent ID from environment or default
-const agentId = process.env.DEV_AGENT_ID || 'dev-kimi'; // Default to dev-kimi if not set
+const agentId = process.env.DEV_AGENT_ID || 'dev-kimi';
 const cli = new AgentChatCLI(agentId);
 
 async function main() {
-  // Initialize the message bus
   await cli.initialize();
   
   const args = process.argv.slice(2);
   const command = args[0];
 
   if (!command) {
-    console.log('Usage: node agent-chat-cli.js <send|inbox|broadcast|count> [args...]');
+    console.log('Usage: node agent-chat-cli.js <command> [args...]');
     return;
   }
 
-  // Validate command against allowlist
   if (!cli.isAllowedCommand(command)) {
+    console.log(`Command '${command}' not allowed in agent mode.`);
     return;
   }
 
@@ -560,13 +497,11 @@ async function main() {
   }
 }
 
-// Handle graceful shutdown
 process.on('SIGINT', async () => {
   console.log('\nShutting down gracefully...');
   process.exit(0);
 });
 
-// Run the main function
 main().catch(err => {
   console.error('Error:', err.message);
   process.exit(1);

@@ -1,7 +1,6 @@
 /*
  * Optimized CUDA kernel for batch token embedding & attention
- * Blackwell (RTX 5060) optimized
- * Compile: nvcc -arch=sm_100 -O3 -o inference_kernel inference_kernel.cu
+ * Compile: nvcc -arch=sm_86 -O3 -o inference_kernel inference_kernel.cu
  */
 
 #include <cuda_runtime.h>
@@ -13,12 +12,11 @@
 
 /**
  * Batch embedding lookup kernel
- * Maps token IDs to embeddings from lookup table
  */
 __global__ void batch_embed_lookup(
-    const int* token_ids,      // [batch_size * seq_len]
-    const float* embedding_table,  // [vocab_size, embed_dim]
-    float* embeddings,         // output [batch_size, seq_len, embed_dim]
+    const int* __restrict__ token_ids,
+    const float* __restrict__ embedding_table,
+    float* __restrict__ embeddings,
     int batch_size,
     int seq_len,
     int vocab_size,
@@ -42,49 +40,70 @@ __global__ void batch_embed_lookup(
 }
 
 /**
- * Fused layer norm kernel
+ * Fused layer norm kernel — one block per row for proper reduction.
  * Computes: y = (x - mean) / sqrt(var + eps) * weight + bias
  */
 __global__ void fused_layer_norm(
-    const float* input,        // [N, hidden_size]
-    const float* weight,       // [hidden_size]
-    const float* bias,         // [hidden_size]
-    float* output,             // [N, hidden_size]
+    const float* __restrict__ input,
+    const float* __restrict__ weight,
+    const float* __restrict__ bias,
+    float* __restrict__ output,
     int N,
     int hidden_size,
     float eps
 ) {
-    // Safer (correct) per-row computation.
-    // To avoid subtle shared-memory indexing/race issues with tiled 2D blocks,
-    // each thread will compute the per-row mean and variance by scanning the
-    // row. This is less optimal but correct and avoids cross-block reduction
-    // races. We can optimize later with a multi-phase reduction if needed.
+    int row = blockIdx.x;
+    if (row >= N) return;
 
-    int row = blockIdx.y * blockDim.y + threadIdx.y;
-    int col = blockIdx.x * blockDim.x + threadIdx.x;
+    int tid = threadIdx.x;
 
-    if (row >= N || col >= hidden_size) return;
+    // Shared memory for reduction
+    extern __shared__ float shared[];
+    float* s_sum = shared;
+    float* s_var = &shared[blockDim.x];
 
-    int idx = row * hidden_size + col;
-
-    // Compute mean by scanning the row
-    float sum = 0.0f;
-    for (int i = 0; i < hidden_size; ++i) {
-        sum += input[row * hidden_size + i];
+    // Phase 1: Compute mean
+    float thread_sum = 0.0f;
+    for (int i = tid; i < hidden_size; i += blockDim.x) {
+        thread_sum += input[row * hidden_size + i];
     }
-    float mean = sum / (float)hidden_size;
+    s_sum[tid] = thread_sum;
+    __syncthreads();
 
-    // Compute variance
-    float var_sum = 0.0f;
-    for (int i = 0; i < hidden_size; ++i) {
+    // Block reduction for sum
+    for (int s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (tid < s) {
+            s_sum[tid] += s_sum[tid + s];
+        }
+        __syncthreads();
+    }
+    float mean = s_sum[0] / (float)hidden_size;
+    __syncthreads();
+
+    // Phase 2: Compute variance
+    float thread_var = 0.0f;
+    for (int i = tid; i < hidden_size; i += blockDim.x) {
         float d = input[row * hidden_size + i] - mean;
-        var_sum += d * d;
+        thread_var += d * d;
     }
-    float var = var_sum / (float)hidden_size;
+    s_var[tid] = thread_var;
+    __syncthreads();
 
-    // Normalize and apply affine transform
-    float normalized = (input[idx] - mean) / sqrtf(var + eps);
-    output[idx] = normalized * weight[col] + bias[col];
+    for (int s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (tid < s) {
+            s_var[tid] += s_var[tid + s];
+        }
+        __syncthreads();
+    }
+    float variance = s_var[0] / (float)hidden_size;
+    float inv_std = rsqrtf(variance + eps);
+    __syncthreads();
+
+    // Phase 3: Normalize and apply affine
+    for (int i = tid; i < hidden_size; i += blockDim.x) {
+        float normalized = (input[row * hidden_size + i] - mean) * inv_std;
+        output[row * hidden_size + i] = normalized * weight[i] + bias[i];
+    }
 }
 
 /**
@@ -92,7 +111,7 @@ __global__ void fused_layer_norm(
  * Numerically stable implementation
  */
 __global__ void batch_softmax(
-    float* scores,             // [batch_size * seq_len, seq_len]
+    float* __restrict__ scores,
     int batch_size,
     int seq_len
 ) {
@@ -100,11 +119,9 @@ __global__ void batch_softmax(
     int total_rows = batch_size * seq_len;
 
     if (row >= total_rows) return;
-
     if (seq_len <= 0) return;
 
-    float max_val = -INFINITY;
-    float sum_exp = 0.0f;
+    float max_val = -3.402823466e+38f; // -FLT_MAX
 
     // Find max for numerical stability
     for (int i = 0; i < seq_len; i++) {
@@ -113,6 +130,7 @@ __global__ void batch_softmax(
     }
 
     // Compute exp and sum
+    float sum_exp = 0.0f;
     for (int i = 0; i < seq_len; i++) {
         float exp_val = expf(scores[row * seq_len + i] - max_val);
         scores[row * seq_len + i] = exp_val;
@@ -127,13 +145,14 @@ __global__ void batch_softmax(
 }
 
 /**
- * Matrix multiply: C = A @ B (optimized for Blackwell)
+ * Naive matrix multiply: C = A @ B
  * A: [M, K], B: [K, N], C: [M, N]
+ * NOTE: This is a naive implementation. For production use, consider cuBLAS or a tiled kernel.
  */
-__global__ void optimized_matmul(
-    const float* A,
-    const float* B,
-    float* C,
+__global__ void naive_matmul(
+    const float* __restrict__ A,
+    const float* __restrict__ B,
+    float* __restrict__ C,
     int M, int K, int N
 ) {
     int row = blockIdx.y * blockDim.y + threadIdx.y;
@@ -186,10 +205,11 @@ extern "C" {
         int hidden_size,
         float eps
     ) {
-        dim3 block(16, 16);
-        dim3 grid((hidden_size + 15) / 16, (N + 15) / 16);
+        // One block per row, BLOCK_SIZE threads per block
+        int threads = BLOCK_SIZE;
+        int shared_mem = 2 * threads * sizeof(float);
         
-        fused_layer_norm<<<grid, block>>>(
+        fused_layer_norm<<<N, threads, shared_mem>>>(
             input, weight, bias, output,
             N, hidden_size, eps
         );
@@ -218,7 +238,7 @@ extern "C" {
         dim3 block(16, 16);
         dim3 grid((N + 15) / 16, (M + 15) / 16);
         
-        optimized_matmul<<<grid, block>>>(A, B, C, M, K, N);
+        naive_matmul<<<grid, block>>>(A, B, C, M, K, N);
         
         cudaError_t err = cudaGetLastError();
         if (err != cudaSuccess) {

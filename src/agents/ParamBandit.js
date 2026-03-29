@@ -9,20 +9,36 @@ class ParamBandit {
     this.totalPulls = 0;
   }
 
-  // Choose arm using Upper‑Confidence‑Bound
+  // Choose arm using Upper-Confidence-Bound
   selectArm() {
+    // If any arm hasn't been pulled, explore it (randomized order)
+    const unpulled = this.arms.filter(a => a.pulls === 0);
+    if (unpulled.length > 0) {
+      // Return a random unpulled arm for fair initial exploration
+      const idx = Math.floor(Math.random() * unpulled.length);
+      return unpulled[idx];
+    }
+
     const c = Math.sqrt(2 * Math.log(this.totalPulls + 1));
-    const scores = this.arms.map(a => {
-      if (a.pulls === 0) return Infinity;
+    let bestIdx = 0;
+    let bestScore = -Infinity;
+    for (let i = 0; i < this.arms.length; i++) {
+      const a = this.arms[i];
       const avg = a.rewardSum / a.pulls;
-      return avg + c / Math.sqrt(a.pulls);
-    });
-    const idx = scores.indexOf(Math.max(...scores));
-    return this.arms[idx];
+      const score = avg + c / Math.sqrt(a.pulls);
+      if (score > bestScore) {
+        bestScore = score;
+        bestIdx = i;
+      }
+    }
+    return this.arms[bestIdx];
   }
 
   // Call after each request finishes
   recordReward(arm, reward) {
+    if (typeof reward !== 'number' || !isFinite(reward)) {
+      return; // Ignore invalid rewards
+    }
     arm.pulls += 1;
     arm.rewardSum += reward;
     this.totalPulls += 1;

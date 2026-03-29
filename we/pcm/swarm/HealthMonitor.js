@@ -40,6 +40,26 @@ class HealthMonitor {
 
   status() { const s = this.eval(this.history[this.history.length - 1] || this.snap()); return { state: s, last: this.lastState }; }
   shouldThrottle() { return this.lastState === "critical"; }
+
+  async init() {
+    this.start();
+    return Promise.resolve();
+  }
+
+  async shutdown() {
+    this.stop();
+    return Promise.resolve();
+  }
+
+  async healthCheck() {
+    return { status: this.status().state };
+  }
+  
+  alert(type, message) {
+    console.log(`🚨 HEALTH ALERT [${type}]: ${message}`);
+    // In a production system, this might send notifications to monitoring systems
+    // For now, we just log the alert
+  }
 }
 
 module.exports = HealthMonitor;

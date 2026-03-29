@@ -3,7 +3,7 @@
  * This is a lightweight wrapper implementing core hot store operations.
  * 
  * Note: LMDB package is required in future for production. This placeholder
- * uses an in-memory Map and JSON file persistence for now.
+ * uses an-in-memory Map and JSON file persistence for now.
  */
 
 const fs = require('fs').promises;
@@ -41,14 +41,14 @@ class HotStore {
         this.metrics.reads++;
         if (this.data.has(key)) {
             this.metrics.hits++;
-            return this.data.get(key);
+            return this.data.get(key).value;
         }
         this.metrics.misses++;
         return null;
     }
 
-    async set(key, value) {
-        this.data.set(key, value);
+    async set(key, value, metadata = {}) {
+        this.data.set(key, { value, metadata });
         this.metrics.writes++;
         this.dirty = true;
         return value;
@@ -73,6 +73,73 @@ class HotStore {
 
     entries() {
         return Array.from(this.data.entries());
+    }
+
+    // Missing methods added below
+
+    size() {
+        return this.data.size;
+    }
+
+    async getAll() {
+        // Return all entries as an object with key-value pairs
+        const result = {};
+        for (const [key, value] of this.data.entries()) {
+            result[key] = value;
+        }
+        return result;
+    }
+
+    async healthCheck() {
+        try {
+            // Check if the store is functioning properly
+            const size = this.data.size;
+            const locationExists = await fs.access(this.location).then(() => true).catch(() => false);
+            
+            return {
+                healthy: true,
+                size: size,
+                location: this.location,
+                initialized: this.initialized,
+                locationAccessible: locationExists,
+                severity: 'normal'
+            };
+        } catch (error) {
+            return {
+                healthy: false,
+                error: error.message,
+                severity: 'critical'
+            };
+        }
+    }
+
+    async flush() {
+        // Force sync data to disk
+        return await this.sync();
+    }
+
+    async queryPage(pattern, options = {}) {
+        const { offset = 0, limit = 50 } = options;
+        const allEntries = Array.from(this.data.entries());
+        
+        // Filter based on pattern if provided
+        let filteredEntries = allEntries;
+        if (pattern) {
+            // Simple pattern matching - can be enhanced based on actual requirements
+            filteredEntries = allEntries.filter(([key, value]) => {
+                // Check if pattern matches in key or value
+                const keyMatch = key.toLowerCase().includes(pattern.toLowerCase());
+                const valueStr = JSON.stringify(value).toLowerCase();
+                const valueMatch = valueStr.includes(pattern.toLowerCase());
+                return keyMatch || valueMatch;
+            });
+        }
+        
+        // Apply pagination
+        const paginatedEntries = filteredEntries.slice(offset, offset + limit);
+        
+        // Convert to array format for compatibility with Mesh.query()
+        return paginatedEntries.map(([key, value]) => ({ key, value }));
     }
 
     async sync() {

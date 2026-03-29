@@ -1,5 +1,73 @@
 {
     "recommendations": [
-        "kilocode.kilo-code"
+        "kilocode.kilo-code",
+        "nvidia.nsight-copilot",
+        
+        // Windsorf AI & Agent Extensions
+        "windsurf.ai",
+        "windsurf.agents",
+        "windsurf.kilo",
+        
+        // Accessibility Extensions
+        "ms-vscode.vscode-accessibility",
+        "chrisdias.vscode-opennewinstance",
+        "streetsidesoftware.code-spell-checker",
+        
+        // Security & Code Quality
+        "ms-vscode.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "ms-vscode.vscode-json",
+        "redhat.vscode-yapm",
+        "ms-vscode.vscode-markdownlint",
+        
+        // TypeScript & JavaScript
+        "ms-vscode.vscode-typescript-next",
+        "formulahendry.auto-rename-tag",
+        "christian-kohler.path-intellisense",
+        
+        // Development Tools
+        "ms-vscode.vscode-git",
+        "eamodio.gitlens",
+        "ms-vscode.hexeditor",
+        "ms-vscode.vscode-docker",
+        "ms-vscode-remote.remote-containers",
+        
+        // Environment & Configuration
+        "redhat.vscode-dotenv",
+        "ms-vscode.vscode-env",
+        "ms-vscode.vscode-settings-sync",
+        
+        // Testing & Debugging
+        "ms-vscode.vscode-jest",
+        "ms-vscode.test-adapter-converter",
+        "hbenl.vscode-test-explorer",
+        
+        // Documentation & Comments
+        "ms-vscode.vscode-markdown",
+        "yzhang.markdown-all-in-one",
+        "shuworks.vscode-table-formatter",
+        
+        // Node.js & npm
+        "ms-vscode.vscode-npm-scripts",
+        "eg2.vscode-npm-script",
+        "christian-kohler.npm-intellisense",
+        
+        // AI & Assistant Tools
+        "github.copilot",
+        "github.copilot-chat",
+        "ms-vscode.vscode-github-pullrequest",
+        
+        // Performance & Profiling
+        "wix.vscode-import-cost",
+        "ms-vscode.vscode-performance",
+        
+        // Security Scanning
+        "snyk-security.vscode-snyk",
+        "gitlab.gitlab-workflow"
+    ],
+    "unwantedRecommendations": [
+        // Extensions that might conflict with Windsorf setup
+        "ms-python.python",
+        "ms-vscode.vscode-python"
     ]
 }

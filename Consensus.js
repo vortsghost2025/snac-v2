@@ -1,1 +1,90 @@
-class Consensus { constructor(o = {}) { this.s = { vote: this.vote.bind(this), weighted: this.w.bind(this), defer: this.d.bind(this) }; this.default = o.default || "weighted"; } aggregate(r, o = {}) { if (!r || !r.length) return { c: null, conf: 0, m: "none" }; if (r.length == 1) return { c: r[0].result?.c || r[0], conf: 1, m: "single", src: r[0].agentId }; return this.s[o.strategy || this.default](r); } vote(r) { const v = new Map(); for (const x of r) { const k = this.norm(x.result?.c || ""); const e = v.get(k) || { cnt: 0, orig: x.result?.c, voters: [] }; e.cnt++; v.set(k, e); } let w = null, mx = 0; for (const [d, x] of v) if (x.cnt > mx) { mx = x.cnt; w = x; } return { c: w?.orig || null, conf: mx / r.length, m: "vote" }; } w(r) { const wt = r.map(x => ({ ...x, w: (x.agentStats?.sr || 0.5) * 0.7 + (x.duration ? Math.exp(-x.duration / 10000) : 0.5) * 0.3 })); wt.sort((a, b) => b.w - a.w); return { c: wt[0].result?.c || null, conf: wt[0].w, m: "weighted" }; } d(r) { return { c: r[0].result?.c || null, conf: 1 / r.length, m: "defer" }; } norm(t) { return t.toLowerCase().replace(/[^\w\s]/g, "").replace(/\s+/g, " ").trim().slice(0, 200); } sim(a, b) { const A = new Set(a.toLowerCase().split(/\s+/)); const B = new Set(b.toLowerCase().split(/\s+/)); const i = new Set([...A].filter(x => B.has(x))); const u = new Set([...A, ...B]); return i.size / u.size; } } module.exports = Consensus;
+class Consensus {
+  constructor(options = {}) {
+    this.strategies = {
+      vote: this.vote.bind(this),
+      weighted: this.weighted.bind(this),
+      defer: this.defer.bind(this)
+    };
+    this.default = options.default || "weighted";
+  }
+
+  aggregate(results, options = {}) {
+    if (!results || !results.length) {
+      return { content: null, confidence: 0, method: "none" };
+    }
+    if (results.length === 1) {
+      return {
+        content: results[0].result?.content || results[0],
+        confidence: 1,
+        method: "single",
+        source: results[0].agentId
+      };
+    }
+    return this.strategies[options.strategy || this.default](results);
+  }
+
+  vote(results) {
+    const votes = new Map();
+    for (const item of results) {
+      const key = this.normalize(item.result?.content || "");
+      const entry = votes.get(key) || { count: 0, original: item.result?.content, voters: [] };
+      entry.count++;
+      votes.set(key, entry);
+    }
+
+    let winner = null, maxVotes = 0;
+    for (const [key, entry] of votes) {
+      if (entry.count > maxVotes) {
+        maxVotes = entry.count;
+        winner = entry;
+      }
+    }
+
+    return {
+      content: winner?.original || null,
+      confidence: maxVotes / results.length,
+      method: "vote"
+    };
+  }
+
+  weighted(results) {
+    const weighted = results.map(item => ({
+      ...item,
+      weight: (item.agentStats?.successRate || 0.5) * 0.7 +
+              (item.duration ? Math.exp(-item.duration / 10000) : 0.5) * 0.3
+    }));
+    weighted.sort((a, b) => b.weight - a.weight);
+
+    return {
+      content: weighted[0].result?.content || null,
+      confidence: weighted[0].weight,
+      method: "weighted"
+    };
+  }
+
+  defer(results) {
+    return {
+      content: results[0].result?.content || null,
+      confidence: 1 / results.length,
+      method: "defer"
+    };
+  }
+
+  normalize(text) {
+    return text.toLowerCase()
+      .replace(/[^\w\s]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 200);
+  }
+
+  similarity(a, b) {
+    const setA = new Set(a.toLowerCase().split(/\s+/));
+    const setB = new Set(b.toLowerCase().split(/\s+/));
+    const intersection = new Set([...setA].filter(x => setB.has(x)));
+    const union = new Set([...setA, ...setB]);
+    return intersection.size / union.size;
+  }
+}
+
+module.exports = Consensus;

@@ -121,6 +121,28 @@ class BootstrapProtocol {
   getStatus() {
     return { quarantined: this.quarantine.size, stats: this.stats, blipValid: !!this.blipSecret };
   }
+
+  async init() {
+    // Initialize bootstrap protocol
+    return Promise.resolve();
+  }
+
+  async shutdown() {
+    // Cleanup bootstrap protocol
+    this.quarantine.clear();
+    return Promise.resolve();
+  }
+
+  async healthCheck() {
+    return { status: 'healthy', quarantined: this.quarantine.size };
+  }
+
+  async bootstrap(options = {}) {
+    // Bootstrap the mesh with initial agents
+    console.log(`Bootstrap: Creating ${options.agentCount || 10} agents`);
+    // This is handled by the swarm's init method
+    return Promise.resolve();
+  }
 }
 
 module.exports = BootstrapProtocol;

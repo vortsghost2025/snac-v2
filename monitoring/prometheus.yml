@@ -4,8 +4,13 @@ global:
   evaluation_interval: 15s
 
 rule_files:
-  # - "first_rules.yml"
-  # - "second_rules.yml"
+  - "alert_rules.yml"
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          - alertmanager:9093
 
 scrape_configs:
   - job_name: 'prometheus'
@@ -18,11 +23,7 @@ scrape_configs:
     metrics_path: /metrics
     scrape_interval: 5s
 
-  - job_name: 'node-exporter'
-    static_configs:
-      - targets: ['node-exporter:9100']
-
-  - job_name: 'nvidia-smi-exporter'
+  - job_name: 'nvidia-gpu'
     static_configs:
       - targets: ['nvidia_exporter:9400']
     scrape_interval: 10s
@@ -33,8 +34,65 @@ scrape_configs:
     metrics_path: /metrics
     scrape_interval: 10s
 
-  - job_name: 'redis'
+  # SNAC-v2 Backend (Port 3005)
+  - job_name: 'snac-v2-backend'
     static_configs:
-      - targets: ['redis:6379']
-    metrics_path: /metrics
+      - targets: ['localhost:3005']
+    metrics_path: '/metrics'
     scrape_interval: 10s
+    
+  # Medical/Environmental Integrator (Port 3006)
+  - job_name: 'medical-integrator'
+    static_configs:
+      - targets: ['localhost:3006']
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+    
+  # Federation Game (Port 8080)
+  - job_name: 'federation-game'
+    static_configs:
+      - targets: ['localhost:8080']
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+    
+  # Node Exporter (system metrics)
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['localhost:9100']
+    scrape_interval: 30s
+    
+  # Nginx metrics
+  - job_name: 'nginx'
+    static_configs:
+      - targets: ['localhost:9113']
+    scrape_interval: 30s
+    
+  # WebSocket connections monitoring
+  - job_name: 'websocket-monitor'
+    static_configs:
+      - targets: ['localhost:3005', 'localhost:3006']
+    metrics_path: '/websocket-status'
+    scrape_interval: 10s
+    
+  # Health check endpoints
+  - job_name: 'health-checks'
+    static_configs:
+      - targets: ['localhost:3005', 'localhost:3006', 'localhost:8080']
+    metrics_path: '/health'
+    scrape_interval: 30s
+
+  # GPU Kernel Service
+  - job_name: 'gpu-kernel-service'
+    static_configs:
+      - targets: ['localhost:8080']
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+    
+  # GPU Kernel Performance
+  - job_name: 'gpu-kernel-performance'
+    static_configs:
+      - targets: ['localhost:8080']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+    params:
+      type: ['performance']

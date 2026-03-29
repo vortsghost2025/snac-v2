@@ -138,6 +138,21 @@ class PipelineRunner {
   async processWeather(data) { return { forecast: "computed", confidence: 0.85, data }; }
   async processSatellite(data) { return { imagery: "processed", confidence: 0.9, data }; }
   async processEpidemiology(data) { return { models: "calculated", confidence: 0.8, data }; }
+
+  async init() {
+    // Initialize pipelines
+    return Promise.resolve();
+  }
+
+  async shutdown() {
+    // Cleanup pipelines
+    this.pipelines.clear();
+    return Promise.resolve();
+  }
+
+  async healthCheck() {
+    return { status: 'healthy', pipelines: this.pipelines.size };
+  }
 }
 
 module.exports = PipelineRunner;

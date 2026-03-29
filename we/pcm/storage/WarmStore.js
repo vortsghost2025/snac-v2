@@ -58,8 +58,32 @@ class WarmStore {
     `);
     }
 
-    set(cap) {
-        const body = JSON.stringify(cap);
+    // Overloaded set method to support both (cap) and (key, value, metadata) signatures
+    set(arg1, arg2, arg3) {
+        let cap;
+        
+        // Check if first argument is a capsule object
+        if (arg2 === undefined && typeof arg1 === 'object' && arg1.id) {
+            cap = arg1;
+        } else {
+            // Construct capsule from (key, value, metadata) parameters
+            const key = arg1;
+            const value = arg2;
+            const metadata = arg3 || {};
+            const now = Date.now();
+            
+            cap = {
+                id: key,
+                value: value,
+                created_at: metadata.created_at || now,
+                last_activated: metadata.last_activated || now,
+                confidence: metadata.confidence || 0.8,
+                thermal_state: metadata.thermal_state || 'warm',
+                tags: metadata.tags || []
+            };
+        }
+        
+        const body = JSON.stringify(cap.value || cap.body || cap);
         this.insertStmt.run({
             id: cap.id,
             body,
@@ -123,11 +147,40 @@ class WarmStore {
         return info.changes;
     }
 
+    async healthCheck() {
+        try {
+            // Check if the database connection is active
+            const result = this.db.prepare('SELECT 1').get();
+            
+            return {
+                healthy: true,
+                dbLocation: this.location,
+                connected: !!this.db,
+                severity: 'normal'
+            };
+        } catch (error) {
+            return {
+                healthy: false,
+                error: error.message,
+                severity: 'critical'
+            };
+        }
+    }
+
     close() {
         if (this.db) {
             this.db.close();
             this.db = null;
         }
+    }
+    
+    async expireOldEntries(maxAgeMs = 86400000) {  // Default to 24 hours
+        const cutoff = Date.now() - maxAgeMs;
+        const info = this.db.prepare(`
+      DELETE FROM cap
+      WHERE last_activated < ? AND thermal_state = 'warm'
+    `).run(cutoff);
+        return info.changes;
     }
 }
 

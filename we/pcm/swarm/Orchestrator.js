@@ -135,6 +135,46 @@ class Orchestrator {
     for (const a of this.agents.values()) { byR[a.role] = (byR[a.role] || 0) + 1; byS[a.state] = (byS[a.state] || 0) + 1; }
     return { count: this.agents.size, byRole: byR, byState: byS, queue: this.queue.length, stats: this.stats, minEnforced: this.config.minAgents };
   }
+  
+  async healthCheck() {
+    try {
+      const status = this.getStatus();
+      
+      // Determine health status based on agent counts and queue
+      let severity = 'normal';
+      if (status.count < this.config.minAgents) {
+        severity = 'warning';
+      } else if (status.queue > 100) {  // If queue is very long
+        severity = 'warning';
+      } else if (status.byState['offline'] > status.count * 0.5) {  // More than half agents offline
+        severity = 'critical';
+      }
+      
+      return {
+        healthy: severity !== 'critical',
+        status: severity,
+        details: status,
+        severity: severity
+      };
+    } catch (error) {
+      return {
+        healthy: false,
+        error: error.message,
+        severity: 'critical'
+      };
+    }
+  }
+  
+  getActiveAgentCount() {
+    // Count agents that are not in 'offline' state
+    let count = 0;
+    for (const agent of this.agents.values()) {
+      if (agent.state !== 'offline') {
+        count++;
+      }
+    }
+    return count;
+  }
 }
 
 module.exports = Orchestrator;

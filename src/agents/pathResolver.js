@@ -18,14 +18,11 @@ class PathResolver {
 
   /**
    * Resolve a path within an agent's allowed zones
-   * @param {string} agentId - The requesting agent ID
-   * @param {string} relativePath - The path to resolve
-   * @returns {string} The resolved absolute path
-   * @throws {Error} If path traversal is detected or zone violation occurs
    */
   resolvePath(agentId, relativePath) {
-    // Normalize the requested path
-    const requestedPath = path.resolve(relativePath);
+    // Normalize the requested path — resolve relative to a known base
+    const basePath = path.resolve(__dirname, '../..');
+    const requestedPath = path.resolve(basePath, relativePath);
     
     // Get the agent's allowed zones
     const allowedZones = this.agentZones[agentId];
@@ -35,43 +32,51 @@ class PathResolver {
 
     // Check if the requested path is within any of the agent's allowed zones
     for (const zone of allowedZones) {
-      const zonePath = path.resolve(zone);
+      const zonePath = path.resolve(basePath, zone);
+      const zoneWithSep = zonePath.endsWith(path.sep) ? zonePath : zonePath + path.sep;
       
-      // Ensure the requested path starts with the zone path
-      if (requestedPath.startsWith(zonePath + path.sep) || requestedPath === zonePath) {
+      if (requestedPath.startsWith(zoneWithSep) || requestedPath === zonePath) {
         return requestedPath;
       }
     }
 
-    // If we get here, the path is outside the agent's allowed zones
     throw new Error(`EPERM: Agent ${agentId} attempted to access path outside allowed zones: ${relativePath}`);
   }
 
   /**
-   * Validate that a path doesn't contain dangerous patterns
-   * @param {string} inputPath - The path to validate
-   * @returns {boolean} True if path is safe
+   * Validate that a path doesn't contain dangerous patterns.
+   * Handles double-encoding attacks.
    */
   isValidPath(inputPath) {
+    if (typeof inputPath !== 'string') return false;
+    
     // Check for null bytes
     if (inputPath.includes('\0')) {
       return false;
     }
 
-    // Check for encoded path traversal attempts
-    const decodedPath = decodeURIComponent(inputPath);
-    if (decodedPath.includes('../') || decodedPath.includes('..\\')) {
+    // Decode URI encoding iteratively to catch double-encoding
+    let decoded = inputPath;
+    let prevDecoded = null;
+    while (decoded !== prevDecoded) {
+      prevDecoded = decoded;
+      try {
+        decoded = decodeURIComponent(decoded);
+      } catch (e) {
+        // Invalid encoding
+        return false;
+      }
+    }
+    
+    if (decoded.includes('../') || decoded.includes('..\\')) {
       return false;
     }
 
-    // Additional checks can be added here
     return true;
   }
 
   /**
    * Get allowed zones for an agent
-   * @param {string} agentId - The agent ID
-   * @returns {string[]} Array of allowed zones
    */
   getAllowedZones(agentId) {
     return this.agentZones[agentId] || [];
@@ -79,9 +84,6 @@ class PathResolver {
 
   /**
    * Check if a path is within an agent's zone
-   * @param {string} agentId - The agent ID
-   * @param {string} requestedPath - The path to check
-   * @returns {boolean} True if path is allowed
    */
   isInAgentZone(agentId, requestedPath) {
     try {

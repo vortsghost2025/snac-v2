@@ -10,11 +10,16 @@ const os = require('os');
 
 const CONFIG = {
   port: 7777,
-  speakCommand: os.platform() === 'win32' 
-    ? (text) => `powershell -Command "Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('${text.replace(/'/g, "''")}')"`
-    : os.platform() === 'darwin'
-    ? (text) => `say "${text.replace(/"/g, '\\"')}"`
-    : (text) => `espeak "${text.replace(/"/g, '\\"')}" 2>/dev/null || echo "${text}"`,
+  // Safe command builders - return [command, args] array instead of shell string
+  speakCommand: ((platform) => {
+    if (platform === 'win32') {
+      return (text) => ['powershell', ['-Command', `Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('${text.replace(/'/g, "''")}')`]];
+    } else if (platform === 'darwin') {
+      return (text) => ['say', [text]];
+    } else {
+      return (text) => ['espeak', [text]];
+    }
+  })(os.platform()),
   maxHistory: 1000,
   truncateLength: 150
 };
@@ -80,9 +85,10 @@ class TerminalEchoBridge {
     this.speaking = true;
     while (this.speechQueue.length > 0) {
       const text = this.speechQueue.shift();
-      const cmd = CONFIG.speakCommand(text);
+      const [cmd, args] = CONFIG.speakCommand(text);
       try {
-        const proc = spawn(cmd, { shell: true, stdio: 'pipe' });
+        // Use spawn without shell to prevent command injection
+        const proc = spawn(cmd, args, { shell: false, stdio: 'pipe' });
         await new Promise((resolve) => {
           proc.on('close', resolve);
           setTimeout(resolve, 5000);

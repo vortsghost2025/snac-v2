@@ -1,5 +1,6 @@
 const express = require("express");
 const path = require('path');
+const logger = require('./utils/logger');
 const { limiter, securityHeaders, validateInput, sanitizeError } = require('./security-middleware');
 
 // Use relative path from current directory instead of hardcoded Windows path
@@ -9,27 +10,78 @@ const app = express();
 app.use(securityHeaders);
 app.use(limiter);
 app.use(express.json({ limit: '5mb' }));
+
+// Request ID middleware for tracing
+app.use((req, res, next) => {
+  req.id = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  res.setHeader('X-Request-ID', req.id);
+  next();
+});
+
 app.use(validateInput);
 
-// Initialize autonomous learning components
-const FeedbackCollector = require('./src/agents/FeedbackCollector');
-const ModelSwapper = require('./src/agents/ModelSwapper');
-const ParamBandit = require('./src/agents/ParamBandit');
+// GPU Acceleration Components
+const gpuGuard = require('./utils/gpuGuard');
+const gpuMetrics = require('./utils/gpuMetrics');
+const { MultiGPUManager } = require('./src/gpu/multiGPUManager');
+const { ModelRegistry } = require('./src/modelRegistry');
+const healthRouter = require('./routes/health');
 
-// Initialize the feedback collector
-const feedbackCollector = new FeedbackCollector();
+// VPS AI Integration
+const vpsAiIntegration = require('./src/vps/vpsAiIntegration');
+const vpsAiRoutes = require('./routes/vpsAi');
+const clineRouter = require('./routes/cline');
+const gordonMcpGateway = require('./gordon-mcp-gateway');
 
-// Initialize the param bandit with different configuration options
-const bandit = new ParamBandit([
-  { temp: 0.2, top_p: 0.9, ngl: 16 },
-  { temp: 0.5, top_p: 0.8, ngl: 24 },
-  { temp: 0.7, top_p: 0.7, ngl: 32 },
-]);
+// Initialize GPU components
+let multiGPUManager = null;
+let modelRegistry = null;
 
-let mesh = null;
+async function initGPUComponents() {
+  try {
+    // Start GPU metrics collection
+    gpuMetrics.startMetricsCollection(5000);
+    
+    // Initialize multi-GPU manager
+    multiGPUManager = new MultiGPUManager({ strategy: 'least-busy' });
+    await multiGPUManager.detectGPUs();
+    multiGPUManager.startMonitoring();
+    
+    // Initialize model registry
+    modelRegistry = new ModelRegistry({
+      registryPath: './models/registry',
+      modelsDir: './models',
+      autoPromote: true
+    });
+    await modelRegistry.initialize();
+    
+    logger.info('GPU acceleration components initialized');
+  } catch (error) {
+    logger.warn('GPU components initialization failed (will use CPU fallback):', error.message);
+  }
+}
+
+// Initialize VPS AI integration
+vpsAiIntegration.initialize()
+  .then(success => {
+    if (success) {
+      logger.info('VPS AI integration initialized successfully');
+    } else {
+      logger.info('VPS AI integration failed to initialize, will use fallback methods');
+    }
+  })
+  .catch(error => {
+    logger.error('Failed to initialize VPS AI integration:', error);
+  });
 
 // Initialize mesh on startup
 async function initMesh() {
+  // Prevent double initialization
+  if (mesh) {
+    logger.info("Mesh already initialized, skipping re-initialization");
+    return;
+  }
+  
   const Mesh = require('./we/pcm/Mesh'); // Dynamically require to avoid early loading
   
   mesh = new Mesh({
@@ -41,11 +93,52 @@ async function initMesh() {
   });
   
   await mesh.init({ agentCount: parseInt(process.env.PCM_AGENTS) || 10 });
-  console.log("PCM initialized via API");
+  logger.info("PCM initialized via API");
+  
+  // Integrate VPS AI with MessageBus after mesh is initialized
+  if (vpsAiIntegration && mesh.messageBus) {
+    vpsAiIntegration.integrateWithMessageBus(mesh.messageBus);
+    logger.info("VPS AI integrated with MessageBus");
+  }
 }
 
-// Health check
-app.get("/health", (req, res) => {
+// Health check routes
+app.use('/', healthRouter);
+
+// VPS AI routes
+app.use('/vps-ai', vpsAiRoutes);
+
+// Cline API routes (with truth guard)
+app.use('/api/cline', clineRouter);
+
+// ========================================
+// GORDON MCP GATEWAY - Docker Deployment
+// ========================================
+app.use('/gordon', gordonMcpGateway);
+
+// Initialize autonomous learning components
+const FeedbackCollector = require('./src/agents/FeedbackCollector');
+const ModelSwapper = require('./src/agents/ModelSwapper');
+const ParamBandit = require('./src/agents/ParamBandit');
+
+// Initialize the feedback collector
+const feedbackCollector = new FeedbackCollector();
+feedbackCollector.initialize().catch(err => {
+  logger.warn('FeedbackCollector initialization failed:', err.message);
+});
+
+// Initialize the param bandit with different configuration options
+const bandit = new ParamBandit([
+  { temp: 0.2, top_p: 0.9, ngl: 16 },
+  { temp: 0.5, top_p: 0.8, ngl: 24 },
+  { temp: 0.7, top_p: 0.7, ngl: 32 },
+]);
+
+let mesh = null;
+
+// Health check - uses router from routes/health.js mounted at /
+// Additional health endpoint with mesh-specific info
+app.get("/health/mesh", (req, res) => {
   res.json({ 
     status: "ok", 
     pcm: mesh?.initialized || false,
@@ -98,7 +191,7 @@ app.post("/free-coding-agent/run", async (req, res) => {
       function sanitizeFilesContainer(obj) {
         if (!obj) return;
         const files = obj.files || (obj.metadata && obj.metadata.files);
-        if (!files || Array.isArray(files)) return;
+        if (!files || !Array.isArray(files)) return;
 
         const abs = [];
         const rel = [];
@@ -112,14 +205,14 @@ app.post("/free-coding-agent/run", async (req, res) => {
               try {
                 candidate = path.resolve(workspaceBase, entry);
               } catch (e) {
-                console.warn('Path validation failed:', e.message);
+                logger.warn('Path validation failed:', e.message);
                 continue;
               }
             } else if (entry && typeof entry === 'object' && entry.path) {
               try {
                 candidate = path.resolve(workspaceBase, entry.path);
               } catch (e) {
-                console.warn('Path validation failed:', e.message);
+                logger.warn('Path validation failed:', e.message);
                 continue;
               }
             } else {
@@ -217,15 +310,15 @@ app.post("/free-coding-agent/run", async (req, res) => {
           }
 
           req._sanitizationWarnings = warnings;
-          console.warn('Sanitized request - removed outside-workspace files:', warnings);
+          logger.warn('Sanitized request - removed outside-workspace files:', warnings);
         }
       } catch (e) {
         // If our defensive check fails, do not block the request; proceed with original options
-        console.warn('Path validation failed:', e && e.message);
+        logger.warn('Path validation failed:', e && e.message);
       }
     } catch (e) {
       // If sanitization fails, do not block the request; proceed with original options
-      console.warn('Failed to sanitize incoming file paths:', e && e.message);
+      logger.warn('Failed to sanitize incoming file paths:', e && e.message);
     }
 
     // Select parameters using the bandit algorithm
@@ -233,16 +326,20 @@ app.post("/free-coding-agent/run", async (req, res) => {
     const selectedParams = { ...arm.config, ...options };
     
     // === Token cost estimation ===
+    const MODELS = ["gemma3:1b", "qwen2.5", "code"];
     const modelChoice = adminForce ||
       (mode && process.env.MODEL_OVERRIDE?.[mode]) ||
-      ((input.length % 3) === 0 ? "gemma3:1b" : "qwen2.5");
+      MODELS[arm.index % MODELS.length];
 
     const costEstimate = estimateTokenCost(input, modelChoice);
 
-    console.log(`[${ip}] Processed "${input.substring(0, 30)}..." | Model: ${modelChoice} | Cost: ${costEstimate.toFixed(2)}`);
+    logger.info(`[${ip}] Processed "${input.substring(0, 30)}..." | Model: ${modelChoice} | Cost: ${costEstimate.toFixed(2)}`);
 
     // === Core processing ===
-    console.log("Processing:", input.substring(0, 50) + "...");
+    if (!mesh) {
+      return res.status(503).json({ error: "Mesh not initialized" });
+    }
+    logger.info("Processing:", input.substring(0, 50) + "...");
     const result = await mesh.think(input, { ...selectedParams, useTriad: true });
 
     // Calculate metrics for feedback
@@ -277,7 +374,7 @@ app.post("/free-coding-agent/run", async (req, res) => {
     });
   } catch (err) {
     // Sanitize errors before sending to client
-    console.error("Processing error:", err && err.stack);
+    logger.error("Processing error:", err && err.stack);
     
     // Redact obvious absolute paths (Windows drive letters and workspaceBase)
     let redacted = (err && err.message) ? err.message : String(err);
@@ -305,58 +402,135 @@ function calculateReward(result, latency, costEstimate) {
   return (confidenceFactor * 0.5) + (latencyFactor * 0.3) + (costFactor * 0.2);
 }
 
-// === New metrics endpoint for Prometheus ===
+// Authentication middleware for sensitive endpoints
+const authenticateApiKey = (req, res, next) => {
+  const apiKey = req.headers['x-api-key'] || req.headers['authorization']?.replace('Bearer ', '');
+  const validKey = process.env.API_KEY || process.env.PCM_BLIP_SECRET;
+  
+  // Require API key in production - never bypass
+  if (!validKey) {
+    return res.status(401).json({ error: 'Unauthorized: API_KEY not configured' });
+  }
+  
+  if (!apiKey) {
+    return res.status(401).json({ error: 'Unauthorized: Missing API key' });
+  }
+  
+  // Use timing-safe comparison to prevent timing attacks
+  const crypto = require('crypto');
+  try {
+    if (!crypto.timingSafeEqual(Buffer.from(apiKey), Buffer.from(validKey))) {
+      return res.status(401).json({ error: 'Unauthorized: Invalid API key' });
+    }
+  } catch (err) {
+    return res.status(401).json({ error: 'Unauthorized: Invalid API key' });
+  }
+  
+  next();
+};
+
+// Model registry status
+app.get("/gpu/models", authenticateApiKey, (req, res) => {
+  if (!modelRegistry) {
+    return res.status(503).json({ error: "Model registry not initialized" });
+  }
+  res.json(modelRegistry.getStats());
+});
+
+// Register new model - requires authentication
+app.post("/gpu/models/register", authenticateApiKey, async (req, res) => {
+  if (!modelRegistry) {
+    return res.status(503).json({ error: "Model registry not initialized" });
+  }
+  try {
+    const model = await modelRegistry.registerModel(req.body);
+    res.json(model);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Promote model to production - requires authentication
+app.post("/gpu/models/:id/promote", authenticateApiKey, async (req, res) => {
+  if (!modelRegistry) {
+    return res.status(503).json({ error: "Model registry not initialized" });
+  }
+  try {
+    const model = await modelRegistry.promoteModel(req.params.id);
+    res.json(model);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Rollback to previous model - requires authentication
+app.post("/gpu/models/rollback", authenticateApiKey, async (req, res) => {
+  if (!modelRegistry) {
+    return res.status(503).json({ error: "Model registry not initialized" });
+  }
+  try {
+    const model = await modelRegistry.rollback();
+    res.json(model);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Multi-GPU status
+app.get("/gpu/status", authenticateApiKey, (req, res) => {
+  if (!multiGPUManager) {
+    return res.status(503).json({ error: "Multi-GPU manager not initialized" });
+  }
+  res.json(multiGPUManager.getStats());
+});
+
+// GPU guard stats
+app.get("/gpu/guard-stats", (req, res) => {
+  res.json(gpuGuard.getStats());
+});
+
+// === End GPU & Model Management Endpoints ===
+// Prometheus metrics - use the register from routes/health.js
+// Custom SNAC metrics are registered once at startup
+const client = require('prom-client');
+
+// Create metrics once at module level
+const latencyHistogram = new client.Histogram({
+  name: 'snac_request_duration_seconds',
+  help: 'Request duration in seconds',
+  labelNames: ['method'],
+});
+
+const banditStatsGauge = new client.Gauge({
+  name: 'snac_bandit_total_pulls',
+  help: 'Total number of bandit selections',
+});
+
+const armPullsGauge = new client.Gauge({
+  name: 'snac_bandit_arm_pulls',
+  help: 'Number of pulls per arm',
+  labelNames: ['arm_index'],
+});
+
+const armRewardsGauge = new client.Gauge({
+  name: 'snac_bandit_arm_avg_reward',
+  help: 'Average reward per arm',
+  labelNames: ['arm_index'],
+});
+
 app.get("/metrics", async (req, res) => {
   try {
-    // Import prom-client to generate metrics
-    const client = require('prom-client');
-    const register = client.register;
-    
-    // Register custom metrics if not already registered
-    if (!client.collectDefaultMetrics.metricsRegistered) {
-      client.collectDefaultMetrics();
-      client.collectDefaultMetrics.metricsRegistered = true;
-    }
-    
-    // Add custom metrics
-    const latencyHistogram = new client.Histogram({
-      name: 'snac_request_duration_seconds',
-      help: 'Request duration in seconds',
-      labelNames: ['method'],
-    });
-    
-    // Example: Record a sample metric (in real scenario, you'd record actual values)
-    latencyHistogram.observe(0.15);
-    
-    // Add bandit statistics as metrics
-    const banditStats = new client.Gauge({
-      name: 'snac_bandit_total_pulls',
-      help: 'Total number of bandit selections',
-    });
-    
-    const armPulls = new client.Gauge({
-      name: 'snac_bandit_arm_pulls',
-      help: 'Number of pulls per arm',
-      labelNames: ['arm_index'],
-    });
-    
-    const armRewards = new client.Gauge({
-      name: 'snac_bandit_arm_avg_reward',
-      help: 'Average reward per arm',
-      labelNames: ['arm_index'],
-    });
-    
     // Update metrics with current bandit state
     const stats = bandit.getStats();
-    banditStats.set(stats.totalPulls);
+    banditStatsGauge.set(stats.totalPulls);
     
     stats.arms.forEach((arm, idx) => {
-      armPulls.labels({ arm_index: idx }).set(arm.pulls);
-      armRewards.labels({ arm_index: idx }).set(arm.avgReward);
+      armPullsGauge.labels({ arm_index: idx }).set(arm.pulls);
+      armRewardsGauge.labels({ arm_index: idx }).set(arm.avgReward);
     });
     
-    res.set('Content-Type', register.contentType);
-    res.end(await register.metrics());
+    res.set('Content-Type', client.register.contentType);
+    res.end(await client.register.metrics());
   } catch (err) {
     res.status(500).send("# Metrics collection error");
   }
@@ -463,28 +637,59 @@ app.get("/free-coding-agent/watchdog", (req, res) => {
 
 // Graceful shutdown handler
 process.on('SIGTERM', async () => {
-  console.log('Received SIGTERM, shutting down gracefully');
+  logger.info('Received SIGTERM, shutting down gracefully');
+  gpuMetrics.stopMetricsCollection();
+  if (multiGPUManager) {
+    multiGPUManager.stopMonitoring();
+  }
+  if (feedbackCollector && typeof feedbackCollector.close === 'function') {
+    await feedbackCollector.close();
+  }
   if (mesh && typeof mesh.shutdown === 'function') {
     await mesh.shutdown();
   }
-  process.exit(0);
+  if (server) {
+    server.close(() => {
+      logger.info('HTTP server closed');
+      process.exit(0);
+    });
+  } else {
+    process.exit(0);
+  }
 });
 
 process.on('SIGINT', async () => {
-  console.log('Received SIGINT, shutting down gracefully');
+  logger.info('Received SIGINT, shutting down gracefully');
+  gpuMetrics.stopMetricsCollection();
+  if (multiGPUManager) {
+    multiGPUManager.stopMonitoring();
+  }
+  if (feedbackCollector && typeof feedbackCollector.close === 'function') {
+    await feedbackCollector.close();
+  }
   if (mesh && typeof mesh.shutdown === 'function') {
     await mesh.shutdown();
   }
-  process.exit(0);
+  if (server) {
+    server.close(() => {
+      logger.info('HTTP server closed');
+      process.exit(0);
+    });
+  } else {
+    process.exit(0);
+  }
 });
 
 const PORT = process.env.PORT || 3000;
-initMesh().then(() => {
-  app.listen(PORT, () => console.log("SNAC v2 API running on port " + PORT));
+let server = null;
+
+// Error handling middleware - must be last, BEFORE starting server
+app.use(sanitizeError);
+
+Promise.all([initGPUComponents(), initMesh()]).then(() => {
+  server = app.listen(PORT, () => logger.info(`SNAC v2 API running on port ${PORT}`));
 }).catch(err => {
-  console.error("Failed to init:", err);
+  logger.error('Failed to init:', err);
   process.exit(1);
 });
 
-// Error handling middleware - must be last
-app.use(sanitizeError);

@@ -1,13 +1,25 @@
+# ---------------------------------------------------------
+# SNAC v2 Trainer Dockerfile (Python + CUDA + PyTorch)
+# ---------------------------------------------------------
 FROM nvidia/cuda:12.1-runtime-ubuntu22.04 AS base
 WORKDIR /app
 
-# Python + CUDA toolkit
-RUN apt-get update && apt-get install -y python3-pip git gcc g++ && \
+# Python + build deps
+RUN apt-get update && apt-get install -y python3-pip python3-dev git gcc g++ && \
     rm -rf /var/lib/apt/lists/*
 
-# Install PyTorch with CUDA support and other required packages
+# Upgrade pip
+RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel
+
+# Install Python deps (with compatible versions)
 RUN pip install --no-cache-dir \
     torch==2.2.2+cu121 \
+    --index-url https://download.pytorch.org/whl/cu121
+
+RUN pip install --no-cache-dir \
+    fastapi==0.135.1 \
+    uvicorn==0.41.0 \
+    pydantic==2.12.5 \
     transformers==4.41.2 \
     sentence-transformers==2.7.0 \
     accelerate==0.30.1 \
@@ -17,144 +29,101 @@ RUN pip install --no-cache-dir \
     mlflow==2.14.2 \
     redis==5.0.4 \
     numpy==1.24.3 \
-    pandas==2.2.2
+    qdrant-client==1.17.0 \
+    httpx==0.28.1 \
+    openai==2.26.0 \
+    python-dotenv==1.2.2
 
-# Create trainer directory
-RUN mkdir -p trainer
+# Create directories
+RUN mkdir -p trainer data models
 
-# Create data and models directories
-RUN mkdir -p data models
+# Copy entire project (needed for main.py and agent modules)
+COPY requirements.txt .
+COPY main.py .
+COPY src/ ./src/
 
-# Copy trainer code
-COPY src/agents/torch_llm.py trainer/
-COPY src/agents/faiss_search.py trainer/
+# Create trainer entrypoint
+RUN printf '#!/usr/bin/env python3\n\
+import os, sys\n\
+sys.path.insert(0, "/app")\n\
+\n\
+# Import the trainer logic\n\
+import redis\n\
+import json\n\
+import time\n\
+import torch\n\
+from datasets import Dataset\n\
+from transformers import AutoModelForCausalLM, AutoTokenizer\n\
+from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training\n\
+from accelerate import Accelerator\n\
+import mlflow\n\
+\n\
+r = redis.Redis.from_url(os.getenv("REDIS_URL", "redis://redis:6379"))\n\
+BATCH_SIZE = int(os.getenv("TRAIN_BATCH_SIZE", "256"))\n\
+\n\
+def fetch_batch():\n\
+    samples = []\n\
+    while len(samples) < BATCH_SIZE:\n\
+        raw = r.lpop("training:queue")\n\
+        if raw is None: break\n\
+        samples.append(json.loads(raw))\n\
+    return samples if samples else None\n\
+\n\
+def make_dataset(samples):\n\
+    texts = [s.get("prompt", "") + s.get("response", "") for s in samples]\n\
+    return Dataset.from_dict({"text": texts})\n\
+\n\
+def train_one_step(model_name, dataset, accelerator):\n\
+    tokenizer = AutoTokenizer.from_pretrained(model_name)\n\
+    tokenizer.pad_token = tokenizer.eos_token\n\
+\n\
+    def tokenize(batch):\n\
+        return tokenizer(batch["text"], truncation=True, padding="max_length", max_length=512)\n\
+\n\
+    tokenized = dataset.map(tokenize, batched=True, remove_columns=["text"])\n\
+    tokenized.set_format(type="torch", columns=["input_ids", "attention_mask"])\n\
+\n\
+    lora_cfg = LoraConfig(r=8, lora_alpha=16, target_modules=["q_proj","v_proj","k_proj","o_proj"], lora_dropout=0.05, bias="none")\n\
+    model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.float16, device_map="auto", load_in_8bit=True)\n\
+    model = prepare_model_for_kbit_training(model)\n\
+    model = get_peft_model(model, lora_cfg)\n\
+\n\
+    optimizer = torch.optim.AdamW(model.parameters(), lr=5e-5)\n\
+    model, optimizer, tokenized = accelerator.prepare(model, optimizer, tokenized)\n\
+\n\
+    model.train()\n\
+    for batch in tokenized:\n\
+        outputs = model(**batch, labels=batch["input_ids"])\n\
+        loss = outputs.loss\n\
+        accelerator.backward(loss)\n\
+        optimizer.step()\n\
+        optimizer.zero_grad()\n\
+    return model\n\
+\n\
+def main():\n\
+    accelerator = Accelerator()\n\
+    model_name = os.getenv("BASE_MODEL", "microsoft/DialoGPT-medium")\n\
+    mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000"))\n\
+    mlflow.set_experiment("snac-fine-tune")\n\
+\n\
+    print(f"Trainer started. Model: {model_name}")\n\
+    while True:\n\
+        batch = fetch_batch()\n\
+        if not batch:\n\
+            time.sleep(5)\n\
+            continue\n\
+        ds = make_dataset(batch)\n\
+        with mlflow.start_run():\n\
+            model = train_one_step(model_name, ds, accelerator)\n\
+            adapter_path = f"/app/models/{int(time.time())}"\n\
+            model.save_pretrained(adapter_path)\n\
+            mlflow.log_artifacts(adapter_path, artifact_path="lora_adapter")\n\
+            print(f"Saved LoRA adapter to {adapter_path}")\n\
+\n\
+if __name__ == "__main__":\n\
+    main()\n\
+' > trainer/run.py
 
-# Create the trainer module
-RUN mkdir -p trainer
-COPY --chown=appuser:appuser . .
+RUN printf '"""SNAC v2 GPU Trainer Module"""\n' > trainer/__init__.py
 
-# Create a basic trainer module
-RUN echo "#!/usr/bin/env python3" > trainer/__init__.py && \
-    echo '"""SNAC v2 GPU Trainer Module"""' >> trainer/__init__.py
-
-# Create trainer runner
-RUN echo '#!/usr/bin/env python3' > trainer/run.py && \
-    echo '' >> trainer/run.py && \
-    echo '"""' >> trainer/run.py && \
-    echo 'GPU-Accelerated Training Module for SNAC v2' >> trainer/run.py && \
-    echo 'Handles feedback collection, fine-tuning, and model registration' >> trainer/run.py && \
-    echo '"""' >> trainer/run.py && \
-    echo '' >> trainer/run.py && \
-    echo 'import os, json, time, random' >> trainer/run.py && \
-    echo 'import torch' >> trainer/run.py && \
-    echo 'from datasets import Dataset' >> trainer/run.py && \
-    echo 'from transformers import AutoModelForCausalLM, AutoTokenizer' >> trainer/run.py && \
-    echo 'from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training' >> trainer/run.py && \
-    echo 'from accelerate import Accelerator' >> trainer/run.py && \
-    echo 'import mlflow' >> trainer/run.py && \
-    echo 'import optuna' >> trainer/run.py && \
-    echo 'import redis' >> trainer/run.py && \
-    echo '' >> trainer/run.py && \
-    echo '# -----------------------------------------------------------------' >> trainer/run.py && \
-    echo '# 1️⃣  Load pending samples from Redis' >> trainer/run.py && \
-    echo '# -----------------------------------------------------------------' >> trainer/run.py && \
-    echo 'r = redis.Redis.from_url(os.getenv(\"REDIS_URL\", \"redis://redis:6379\"))' >> trainer/run.py && \
-    echo 'BATCH_SIZE = int(os.getenv(\"TRAIN_BATCH_SIZE\", 256))' >> trainer/run.py && \
-    echo '' >> trainer/run.py && \
-    echo 'def fetch_batch():' >> trainer/run.py && \
-    echo '    raw = r.lpop(\"training:queue\")' >> trainer/run.py && \
-    echo '    if raw is None:' >> trainer/run.py && \
-    echo '        return None' >> trainer/run.py && \
-    echo '    samples = [json.loads(raw)]' >> trainer/run.py && \
-    echo '    while len(samples) < BATCH_SIZE:' >> trainer/run.py && \
-    echo '        raw = r.lpop(\"training:queue\")' >> trainer/run.py && \
-    echo '        if raw is None: break' >> trainer/run.py && \
-    echo '        samples.append(json.loads(raw))' >> trainer/run.py && \
-    echo '    return samples' >> trainer/run.py && \
-    echo '' >> trainer/run.py && \
-    echo '# -----------------------------------------------------------------' >> trainer/run.py && \
-    echo '# 2️⃣  Build a Dataset from the batch' >> trainer/run.py && \
-    echo '# -----------------------------------------------------------------' >> trainer/run.py && \
-    echo 'def make_dataset(samples):' >> trainer/run.py && \
-    echo '    prompts = [s[\"prompt\"] for s in samples]' >> trainer/run.py && \
-    echo '    responses = [s[\"response\"] for s in samples]' >> trainer/run.py && \
-    echo '    # Simple concatenation – you can add EOS tokens, etc.' >> trainer/run.py && \
-    echo '    texts = [p + r for p, r in zip(prompts, responses)]' >> trainer/run.py && \
-    echo '    return Dataset.from_dict({\"text\": texts})' >> trainer/run.py && \
-    echo '' >> trainer/run.py && \
-    echo '# -----------------------------------------------------------------' >> trainer/run.py && \
-    echo '# 3️⃣  Training loop (GPU-accelerated)' >> trainer/run.py && \
-    echo '# -----------------------------------------------------------------' >> trainer/run.py && \
-    echo 'def train_one_step(model_name, dataset, accelerator):' >> trainer/run.py && \
-    echo '    tokenizer = AutoTokenizer.from_pretrained(model_name)' >> trainer/run.py && \
-    echo '    tokenizer.pad_token = tokenizer.eos_token' >> trainer/run.py && \
-    echo '' >> trainer/run.py && \
-    echo '    def tokenize(batch):' >> trainer/run.py && \
-    echo '        return tokenizer(batch[\"text\"], truncation=True, padding=\"max_length\", max_length=512)' >> trainer/run.py && \
-    echo '' >> trainer/run.py && \
-    echo '    tokenized = dataset.map(tokenize, batched=True, remove_columns=[\"text\"])' >> trainer/run.py && \
-    echo '    tokenized.set_format(type=\"torch\", columns=[\"input_ids\", \"attention_mask\"])' >> trainer/run.py && \
-    echo '' >> trainer/run.py && \
-    echo '    # LoRA config – tiny adapter (few hundred KB)' >> trainer/run.py && \
-    echo '    lora_cfg = LoraConfig(' >> trainer/run.py && \
-    echo '        r=8,' >> trainer/run.py && \
-    echo '        lora_alpha=16,' >> trainer/run.py && \
-    echo '        target_modules=[\"q_proj\", \"v_proj\", \"k_proj\", \"o_proj\"],' >> trainer/run.py && \
-    echo '        lora_dropout=0.05,' >> trainer/run.py && \
-    echo '        bias=\"none\",' >> trainer/run.py && \
-    echo '    )' >> trainer/run.py && \
-    echo '    model = AutoModelForCausalLM.from_pretrained(' >> trainer/run.py && \
-    echo '        model_name,' >> trainer/run.py && \
-    echo '        torch_dtype=torch.float16,' >> trainer/run.py && \
-    echo '        device_map=\"auto\",' >> trainer/run.py && \
-    echo '        load_in_8bit=True,' >> trainer/run.py && \
-    echo '    )' >> trainer/run.py && \
-    echo '    model = prepare_model_for_kbit_training(model)' >> trainer/run.py && \
-    echo '    model = get_peft_model(model, lora_cfg)' >> trainer/run.py && \
-    echo '' >> trainer/run.py && \
-    echo '    optimizer = torch.optim.AdamW(model.parameters(), lr=5e-5)' >> trainer/run.py && \
-    echo '' >> trainer/run.py && \
-    echo '    model, optimizer, tokenized = accelerator.prepare(model, optimizer, tokenized)' >> trainer/run.py && \
-    echo '' >> trainer/run.py && \
-    echo '    model.train()' >> trainer/run.py && \
-    echo '    for epoch in range(1):  # one epoch per batch is enough for LoRA' >> trainer/run.py && \
-    echo '        for batch in tokenized:' >> trainer/run.py && \
-    echo '            outputs = model(**batch, labels=batch[\"input_ids\"])' >> trainer/run.py && \
-    echo '            loss = outputs.loss' >> trainer/run.py && \
-    echo '            accelerator.backward(loss)' >> trainer/run.py && \
-    echo '            optimizer.step()' >> trainer/run.py && \
-    echo '            optimizer.zero_grad()' >> trainer/run.py && \
-    echo '    return model' >> trainer/run.py && \
-    echo '' >> trainer/run.py && \
-    echo '# -----------------------------------------------------------------' >> trainer/run.py && \
-    echo '# 4️⃣  Main entry point' >> trainer/run.py && \
-    echo '# -----------------------------------------------------------------' >> trainer/run.py && \
-    echo 'def main():' >> trainer/run.py && \
-    echo '    accelerator = Accelerator()' >> trainer/run.py && \
-    echo '    model_name = os.getenv(\"BASE_MODEL\", \"microsoft/DialoGPT-medium\")' >> trainer/run.py && \
-    echo '    mlflow.set_tracking_uri(os.getenv(\"MLFLOW_URL\", \"http://mlflow:5000\"))' >> trainer/run.py && \
-    echo '    mlflow.set_experiment(\"snac-fine-tune\")' >> trainer/run.py && \
-    echo '' >> trainer/run.py && \
-    echo '    while True:' >> trainer/run.py && \
-    echo '        batch = fetch_batch()' >> trainer/run.py && \
-    echo '        if not batch:' >> trainer/run.py && \
-    echo '            time.sleep(5)   # idle wait' >> trainer/run.py && \
-    echo '            continue' >> trainer/run.py && \
-    echo '' >> trainer/run.py && \
-    echo '        ds = make_dataset(batch)' >> trainer/run.py && \
-    echo '' >> trainer/run.py && \
-    echo '        with mlflow.start_run():' >> trainer/run.py && \
-    echo '            model = train_one_step(model_name, ds, accelerator)' >> trainer/run.py && \
-    echo '            # Save LoRA adapter only (tiny)' >> trainer/run.py && \
-    echo '            adapter_path = f\"/app/models/{int(time.time())}\"' >> trainer/run.py && \
-    echo '            model.save_pretrained(adapter_path)' >> trainer/run.py && \
-    echo '            mlflow.log_artifacts(adapter_path, artifact_path=\"lora_adapter\")' >> trainer/run.py && \
-    echo '            mlflow.log_params({\"batch_size\": len(batch), \"base_model\": model_name})' >> trainer/run.py && \
-    echo '            mlflow.set_tag(\"stage\", \"candidate\")' >> trainer/run.py && \
-    echo '            print(f\"✅ Saved new LoRA adapter to {adapter_path}\")' >> trainer/run.py && \
-    echo '' >> trainer/run.py && \
-    echo 'if __name__ == \"__main__\":' >> trainer/run.py && \
-    echo '    main()'
-
-EXPOSE 5000   # optional API for on-demand training
-CMD ["python", "-m", "trainer.run"]
+CMD ["python3", "trainer/run.py"]
