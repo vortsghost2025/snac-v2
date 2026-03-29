@@ -105,10 +105,9 @@ export class APITools {
             headers
           };
           
-          // Only add body and duplex when there's actually a body to send
+          // Only add body when there's actually a body to send
           if (input.body) {
             fetchOptions.body = JSON.stringify(input.body);
-            fetchOptions.duplex = 'half';
           }
 
           const response = await fetch(input.url, fetchOptions);
@@ -158,7 +157,7 @@ export class APITools {
               query: input.query,
               variables: input.variables || {}
             }),
-            duplex: 'half'
+            
           });
 
           const data = await response.json();
