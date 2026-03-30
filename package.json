@@ -28,7 +28,8 @@
     "ci:gpu": "npm run test:gpu && npm run benchmark:all"
   },
   "dependencies": {
-    "@genkit-ai/mcp": "^1.31.0",
+    "@anthropic-ai/sdk": "^0.80.0",
+    "@genkit-ai/mcp": "^1.16.1",
     "axios": "^1.6.0",
     "bcryptjs": "^2.4.3",
     "better-sqlite3": "^12.8.0",
@@ -50,7 +51,7 @@
   "devDependencies": {
     "eslint": "^8.39.0",
     "jest": "^29.5.0",
-    "nodemon": "^2.0.22",
+    "nodemon": "^3.1.14",
     "playwright": "^1.58.2",
     "supertest": "^6.3.3",
     "ts-jest": "^29.4.6"
