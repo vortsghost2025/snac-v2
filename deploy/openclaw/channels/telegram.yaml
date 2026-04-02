@@ -1,0 +1,51 @@
+# Telegram Channel Configuration
+# Bot token from environment variable
+bot_token: "${TELEGRAM_BOT_TOKEN}"
+
+# Connection mode: "webhook" or "polling"
+mode: "webhook"
+
+# Webhook settings (used when mode is "webhook")
+webhook:
+  url: "https://your-domain.com/webhook"
+  secret_token: "${TELEGRAM_WEBHOOK_SECRET}"
+
+# Polling settings (used when mode is "polling")
+polling:
+  offset: 0
+  timeout: 60
+
+# Command handlers
+commands:
+  - command: "/ask"
+    description: "Ask a question to the Trust Network"
+  - command: "/status"
+    description: "Show system health status"
+  - command: "/agents"
+    description: "List available agents"
+  - command: "/help"
+    description: "Show help information"
+
+# Trust Network gateway settings
+gateway:
+  url: "ws://localhost:8080/gateway"
+  timeout: 30000
+
+# Rate limiting
+rate_limit:
+  # Max requests per user per minute
+  max_requests: 10
+  window_ms: 60000
+
+# Message settings
+message:
+  # Max length of user query
+  max_query_length: 1000
+  # Enable confidence scores in responses
+  show_confidence: true
+
+# Channel metadata for pluggability
+channel:
+  name: "telegram"
+  version: "1.0.0"
+  platform: "Telegram"
