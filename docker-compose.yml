@@ -22,19 +22,6 @@ services:
     depends_on:
       - snac-redis
       - snac-qdrant
-
-  snac-frontend:
-    image: snac-frontend:latest
-    build:
-      context: ./ui
-      dockerfile: Dockerfile
-    ports:
-      - "3001:3000"
-    networks:
-      - snac-net
-    depends_on:
-      - snac-backend
-
   snac-redis:
     image: redis:7-alpine
     ports:
@@ -84,58 +71,6 @@ services:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
     networks:
       - snac-net
-
-  # -------------------------------------------------
-  # NEW: Kilo Gateway (WebSocket hub for agents)
-  # -------------------------------------------------
-  kilo-gateway:
-    build:
-      context: ./src/agents/kilo
-      dockerfile: Dockerfile.kilo
-    environment:
-      - KILO_GATEWAY_PORT=3002
-    ports:
-      - "3002:3002"
-    networks:
-      - snac-net
-    restart: always
-
-  # -------------------------------------------------
-  # NEW: Chat Service (queue UI + API)
-  # -------------------------------------------------
-  chat:
-    build:
-      context: ./chat
-      dockerfile: Dockerfile
-    environment:
-      - CHAT_HOST=0.0.0.0
-      - CHAT_WEB_PORT=7777
-      - CHAT_API_PORT=7778
-    ports:
-      - "7777:7777"
-      - "7778:7778"
-    volumes:
-      - ./chat/.queue:/app/.queue
-    networks:
-      - snac-net
-    restart: always
-
-  # -------------------------------------------------
-  # NEW: Fact-Checker (truth verification service)
-  # -------------------------------------------------
-  fact-checker:
-    build:
-      context: ./fact-checker
-      dockerfile: Dockerfile
-    environment:
-      - PORT=4000
-    ports:
-      - "4000:4000"
-    networks:
-      - snac-net
-    volumes:
-      - ./knowledge:/data
-    restart: always
 
 volumes:
   grafana-data:
