@@ -1,0 +1,142 @@
+openclaw:
+  name: "snac-openclaw"
+  version: "1.0.0"
+  gateway: "ws://localhost:3002"
+
+llm:
+  default_provider: "ollama"
+  providers:
+    - name: "ollama"
+      type: "ollama"
+      base_url: "${OLLAMA_BASE_URL:-http://localhost:11434}"
+      models:
+        - "llama3"
+        - "codellama"
+      priority: 1
+
+    - name: "openai"
+      type: "openai"
+      api_key: "${OPENAI_API_KEY}"
+      models:
+        - "gpt-4o"
+        - "gpt-4o-mini"
+      priority: 2
+
+    - name: "anthropic"
+      type: "anthropic"
+      api_key: "${ANTHROPIC_API_KEY}"
+      models:
+        - "claude-sonnet-4-20250514"
+        - "claude-haiku"
+      priority: 3
+
+  fallback_chain:
+    - "ollama"
+    - "openai"
+    - "anthropic"
+
+agents:
+  - id: "builder"
+    name: "Builder Agent"
+    role: "code_generation"
+    description: "Generates and modifies code based on requirements"
+    capabilities:
+      - "code_write"
+      - "code_refactor"
+      - "file_create"
+    llm_provider: "ollama"
+    gateway_id: "dev-builder"
+
+  - id: "reviewer"
+    name: "Reviewer Agent"
+    role: "code_review"
+    description: "Reviews code for quality, bugs, and best practices"
+    capabilities:
+      - "code_review"
+      - "lint_check"
+      - "security_scan"
+    llm_provider: "ollama"
+    gateway_id: "dev-reviewer"
+
+  - id: "monitor"
+    name: "Monitor Agent"
+    role: "system_monitoring"
+    description: "Monitors system health and agent activity"
+    capabilities:
+      - "health_check"
+      - "log_analysis"
+      - "alert_trigger"
+    llm_provider: "ollama"
+    gateway_id: "dev-monitor"
+
+  - id: "orchestrator"
+    name: "Orchestrator Agent"
+    role: "task_routing"
+    description: "Routes tasks to appropriate agents and coordinates multi-step workflows"
+    capabilities:
+      - "task_decompose"
+      - "agent_route"
+      - "result_merge"
+    llm_provider: "ollama"
+    gateway_id: "dev-orchestrator"
+
+  - id: "researcher"
+    name: "Researcher Agent"
+    role: "research"
+    description: "Gathers information from search engines and documents"
+    capabilities:
+      - "web_search"
+      - "document_parse"
+      - "summarize"
+    llm_provider: "ollama"
+    gateway_id: "dev-researcher"
+
+  - id: "fact-checker"
+    name: "Fact-Checker Agent"
+    role: "verification"
+    description: "Verifies claims against sources and detects contradictions"
+    capabilities:
+      - "claim_extract"
+      - "source_verify"
+      - "contradiction_detect"
+    llm_provider: "openai"
+    gateway_id: "dev-fact-checker"
+
+channels:
+  telegram:
+    enabled: false
+    bot_token: "${TELEGRAM_BOT_TOKEN}"
+    mode: "polling"
+    commands:
+      - trigger: "/ask"
+        description: "Ask a question to the Trust Network"
+        route_to: "orchestrator"
+      - trigger: "/status"
+        description: "Show system health status"
+        route_to: "monitor"
+      - trigger: "/agents"
+        description: "List all connected agents"
+        route_to: "monitor"
+      - trigger: "/help"
+        description: "Show available commands"
+        route_to: "self"
+
+exec:
+  approvals:
+    - pattern: "pip install *"
+      auto_approve: true
+    - pattern: "npm install *"
+      auto_approve: true
+    - pattern: "docker *"
+      auto_approve: false
+    - pattern: "rm *"
+      auto_approve: false
+    - pattern: "git *"
+      auto_approve: true
+  timeout: 120
+  max_output_bytes: 1048576
+
+logging:
+  level: "info"
+  format: "json"
+  output: "stdout"
