@@ -1,0 +1,15 @@
+{
+  "name": "kilo-gateway",
+  "version": "1.0.0",
+  "description": "Kilo Gateway — WebSocket hub for Trust Network agents",
+  "main": "gateway.js",
+  "scripts": {
+    "start": "node gateway.js"
+  },
+  "dependencies": {
+    "ws": "^8.20.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
