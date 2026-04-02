@@ -32,6 +32,7 @@ const vpsAiIntegration = require('./src/vps/vpsAiIntegration');
 const vpsAiRoutes = require('./routes/vpsAi');
 const clineRouter = require('./routes/cline');
 const gordonMcpGateway = require('./gordon-mcp-gateway');
+const chatRouter = require('./mcp-gateway');
 
 // Initialize GPU components
 let multiGPUManager = null;
@@ -104,6 +105,9 @@ async function initMesh() {
 
 // Health check routes
 app.use('/', healthRouter);
+
+// Chat router
+app.use('/', chatRouter);
 
 // VPS AI routes
 app.use('/vps-ai', vpsAiRoutes);
