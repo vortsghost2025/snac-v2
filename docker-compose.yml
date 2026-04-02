@@ -1,87 +1,141 @@
-version: '3.8'
-
-services:
-  collab-hub:
-    build: .
-    container_name: collab-hub
-    ports:
-      - "4000:4000"
-    restart: unless-stopped
-    environment:
-      - PORT=4000
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4000/api/stats"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  ae-local-agent:
-    build: .
-    container_name: ae-local-agent
-    ports:
-      - "3001:3001"
-    environment:
-      - NODE_ENV=production
-      - PORT=3001
-      - AGENT_TYPE=local
-      - AGENT_PROFILE=local
-    volumes:
-      - ./memory-store.json:/usr/src/app/memory-store.json
-      - ./orchestrator-memory.json:/usr/src/app/orchestrator-memory.json
-    restart: unless-stopped
-    networks:
-      - ae-network
-
-  ae-background-agent:
-    build: .
-    container_name: ae-background-agent
-    ports:
-      - "3002:3002"
-    environment:
-      - NODE_ENV=production
-      - PORT=3002
-      - AGENT_TYPE=background
-      - AGENT_PROFILE=background
-    volumes:
-      - ./memory-store.json:/usr/src/app/memory-store.json
-    restart: unless-stopped
-    networks:
-      - ae-network
-
-  ae-cloud-agent:
-    build: .
-    container_name: ae-cloud-agent
-    ports:
-      - "3003:3003"
-    environment:
-      - NODE_ENV=production
-      - PORT=3003
-      - AGENT_TYPE=cloud
-      - AGENT_PROFILE=cloud
-    volumes:
-      - ./memory-store.json:/usr/src/app/memory-store.json
-    restart: unless-stopped
-    networks:
-      - ae-network
-
-  ae-collab-hub:
-    build: .
-    container_name: ae-collab-hub
-    ports:
-      - "4000:4000"
-    environment:
-      - NODE_ENV=production
-      - PORT=4000
-    volumes:
-      - ./memory-store.json:/usr/src/app/memory-store.json
-    restart: unless-stopped
-    networks:
-      - ae-network
+version: "3.9"
 
 networks:
-  ae-network:
+  snac-net:
     driver: bridge
 
+services:
+  # -------------------------------------------------
+  # Core SNAC services (already running)
+  # -------------------------------------------------
+  snac-backend:
+    image: snac-backend:latest
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.gpu
+    ports:
+      - "8000:8000"
+    environment:
+      - NODE_ENV=production
+    networks:
+      - snac-net
+    depends_on:
+      - snac-redis
+      - snac-qdrant
+
+  snac-frontend:
+    image: snac-frontend:latest
+    build:
+      context: ./ui
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3000"
+    networks:
+      - snac-net
+    depends_on:
+      - snac-backend
+
+  snac-redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - snac-net
+
+  snac-db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "5432:5432"
+    networks:
+      - snac-net
+
+  snac-qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    networks:
+      - snac-net
+
+  # -------------------------------------------------
+  # NEW: Grafana (monitoring)
+  # -------------------------------------------------
+  grafana:
+    image: grafana/grafana:10.2.0
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SERVER_HTTP_ADDR=0.0.0.0
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana-data:/var/lib/grafana
+    networks:
+      - snac-net
+    depends_on:
+      - prometheus
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+    networks:
+      - snac-net
+
+  # -------------------------------------------------
+  # NEW: Kilo Gateway (WebSocket hub for agents)
+  # -------------------------------------------------
+  kilo-gateway:
+    build:
+      context: ./src/agents/kilo
+      dockerfile: Dockerfile.kilo
+    environment:
+      - KILO_GATEWAY_PORT=3002
+    ports:
+      - "3002:3002"
+    networks:
+      - snac-net
+    restart: always
+
+  # -------------------------------------------------
+  # NEW: Chat Service (queue UI + API)
+  # -------------------------------------------------
+  chat:
+    build:
+      context: ./chat
+      dockerfile: Dockerfile
+    environment:
+      - CHAT_HOST=0.0.0.0
+      - CHAT_WEB_PORT=7777
+      - CHAT_API_PORT=7778
+    ports:
+      - "7777:7777"
+      - "7778:7778"
+    volumes:
+      - ./chat/.queue:/app/.queue
+    networks:
+      - snac-net
+    restart: always
+
+  # -------------------------------------------------
+  # NEW: Fact-Checker (truth verification service)
+  # -------------------------------------------------
+  fact-checker:
+    build:
+      context: ./fact-checker
+      dockerfile: Dockerfile
+    environment:
+      - PORT=4000
+    ports:
+      - "4000:4000"
+    networks:
+      - snac-net
+    volumes:
+      - ./knowledge:/data
+    restart: always
+
 volumes:
-  memory_store:
-  orchestrator_memory:
+  grafana-data:
