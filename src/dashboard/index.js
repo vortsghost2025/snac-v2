@@ -30,6 +30,133 @@ class DashboardServer {
     this.app.get('/api/status', (req, res) => {
       res.json(this.getSystemStatus());
     });
+
+    // Chat API - send message to an agent
+    this.app.post('/api/chat', async (req, res) => {
+      try {
+        const { agent, message } = req.body;
+        
+        if (!agent || !message) {
+          return res.status(400).json({ 
+            success: false, 
+            error: 'Missing agent or message' 
+          });
+        }
+
+        const validAgents = ['dev-kimi', 'dev-lingma', 'dev-copilot', 'dev-kilo'];
+        if (!validAgents.includes(agent)) {
+          return res.status(400).json({ 
+            success: false, 
+            error: `Invalid agent. Valid agents: ${validAgents.join(', ')}` 
+          });
+        }
+
+        // Send message to agent via MessageBus
+        const result = await this.sendToAgent(agent, message);
+        res.json(result);
+      } catch (err) {
+        console.error('Chat error:', err);
+        res.status(500).json({ 
+          success: false, 
+          error: 'Failed to send message' 
+        });
+      }
+    });
+
+    // Get inbox messages
+    this.app.get('/api/chat/inbox', async (req, res) => {
+      try {
+        const messages = await this.getInbox();
+        res.json({ success: true, messages });
+      } catch (err) {
+        res.status(500).json({ 
+          success: false, 
+          error: 'Failed to get inbox' 
+        });
+      }
+    });
+
+    // Get agent status
+    this.app.get('/api/agents', (req, res) => {
+      res.json(this.getSystemStatus().agents);
+    });
+  }
+
+  async sendToAgent(agentId, message) {
+    try {
+      const MessageBus = require('../agents/MessageBus');
+      const messageBus = new MessageBus('dashboard');
+      await messageBus.initialize();
+      
+      // Send message and wait for response
+      const result = await messageBus.send(agentId, message, 'question');
+      
+      if (result.success) {
+        // Wait briefly and check for response in inbox
+        await new Promise(resolve => setTimeout(resolve, 500));
+        const inbox = await this.checkForResponse(agentId, result.messageId);
+        
+        return {
+          success: true,
+          messageId: result.messageId,
+          response: inbox || `Message sent to ${agentId}. They will respond shortly.`
+        };
+      } else {
+        return { success: false, error: result.error };
+      }
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  async checkForResponse(targetAgent, originalMessageId) {
+    // Check if target agent has responded
+    const fs = require('fs');
+    const mailboxDir = path.join(__dirname, '../../.agents/mailboxes');
+    const agentDir = path.join(mailboxDir, 'dashboard');
+    
+    try {
+      if (fs.existsSync(agentDir)) {
+        const files = fs.readdirSync(agentDir).filter(f => f.endsWith('.json'));
+        
+        for (const file of files) {
+          const content = fs.readFileSync(path.join(agentDir, file), 'utf8');
+          const msg = JSON.parse(content);
+          
+          if (msg.from === targetAgent && msg.timestamp > Date.now() - 10000) {
+            return msg.message || msg.response || `Response from ${targetAgent}`;
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Error checking response:', err);
+    }
+    
+    return null;
+  }
+
+  async getInbox() {
+    const fs = require('fs');
+    const mailboxDir = path.join(__dirname, '../../.agents/mailboxes');
+    const agentDir = path.join(mailboxDir, 'dashboard');
+    
+    try {
+      if (fs.existsSync(agentDir)) {
+        const files = fs.readdirSync(agentDir).filter(f => f.endsWith('.json'));
+        const messages = [];
+        
+        for (const file of files) {
+          const content = fs.readFileSync(path.join(agentDir, file), 'utf8');
+          messages.push(JSON.parse(content));
+        }
+        
+        return messages.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+      }
+    } catch (err) {
+      console.error('Error reading inbox:', err);
+    }
+    
+    return [];
   }
 
   setupWebSocketHandlers() {

@@ -172,6 +172,123 @@
     .connection-status.connected {
       background: #2ecc71;
     }
+
+    .chat-container {
+      grid-column: 1 / -1;
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+      padding: 20px;
+      margin-bottom: 30px;
+    }
+
+    .chat-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 15px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid #eee;
+    }
+
+    .chat-header h2 {
+      margin: 0;
+      color: #2c3e50;
+    }
+
+    .agent-select {
+      padding: 8px 12px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 14px;
+      background: white;
+      cursor: pointer;
+    }
+
+    .chat-messages {
+      height: 300px;
+      overflow-y: auto;
+      border: 1px solid #e0e6ed;
+      border-radius: 4px;
+      padding: 15px;
+      margin-bottom: 15px;
+      background: #f8f9fa;
+    }
+
+    .message {
+      margin-bottom: 12px;
+      padding: 10px 14px;
+      border-radius: 8px;
+      max-width: 80%;
+    }
+
+    .message.user {
+      background: #3498db;
+      color: white;
+      margin-left: auto;
+    }
+
+    .message.agent {
+      background: white;
+      border: 1px solid #e0e6ed;
+      color: #333;
+    }
+
+    .message.error {
+      background: #e74c3c;
+      color: white;
+    }
+
+    .message-meta {
+      font-size: 0.75em;
+      opacity: 0.7;
+      margin-top: 4px;
+    }
+
+    .chat-input-area {
+      display: flex;
+      gap: 10px;
+    }
+
+    .chat-input {
+      flex: 1;
+      padding: 12px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 14px;
+      font-family: inherit;
+    }
+
+    .chat-input:focus {
+      outline: none;
+      border-color: #3498db;
+    }
+
+    .chat-submit {
+      padding: 12px 24px;
+      background: #3498db;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      font-size: 14px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .chat-submit:hover {
+      background: #2980b9;
+    }
+
+    .chat-submit:disabled {
+      background: #95a5a6;
+      cursor: not-allowed;
+    }
+
+    .loading-indicator {
+      text-align: center;
+      padding: 10px;
+      color: #7f8c8d;
+    }
     
     footer {
       margin-top: 30px;
@@ -189,6 +306,29 @@
     </header>
     
     <div class="grid">
+      <!-- Chat Interface Card -->
+      <div class="chat-container">
+        <div class="chat-header">
+          <h2>Chat Interface</h2>
+          <select id="agent-select" class="agent-select">
+            <option value="dev-kimi">dev-kimi</option>
+            <option value="dev-lingma">dev-lingma</option>
+            <option value="dev-copilot">dev-copilot</option>
+            <option value="dev-kilo">dev-kilo</option>
+          </select>
+        </div>
+        <div id="chat-messages" class="chat-messages">
+          <div class="message agent">
+            <div>Welcome! Select an agent and type a message to query them.</div>
+            <div class="message-meta">System</div>
+          </div>
+        </div>
+        <div class="chat-input-area">
+          <input type="text" id="chat-input" class="chat-input" placeholder="Type your message here..." autocomplete="off">
+          <button id="chat-submit" class="chat-submit">Send</button>
+        </div>
+      </div>
+      
       <!-- Agent Status Card -->
       <div class="card agent-card">
         <h2>Agent Status</h2>
@@ -273,8 +413,6 @@
       // Update agent list
       const agentList = document.getElementById('agent-list');
       agentList.innerHTML = '';
-      
-      status.agents.forEach(agent => {
         const agentItem = document.createElement('li');
         agentItem.className = 'agent-item';
         
@@ -339,6 +477,98 @@
         messagesContainer.innerHTML = '<em>No message stats available</em>';
       }
     }
+
+    // Chat functionality
+    const chatInput = document.getElementById('chat-input');
+    const chatSubmit = document.getElementById('chat-submit');
+    const chatMessages = document.getElementById('chat-messages');
+    const agentSelect = document.getElementById('agent-select');
+
+    function addMessage(content, type = 'agent', meta = '') {
+      const messageDiv = document.createElement('div');
+      messageDiv.className = `message ${type}`;
+      messageDiv.innerHTML = `
+        <div>${content}</div>
+        ${meta ? `<div class="message-meta">${meta}</div>` : ''}
+      `;
+      chatMessages.appendChild(messageDiv);
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    async function sendChatMessage() {
+      const message = chatInput.value.trim();
+      if (!message) return;
+
+      const selectedAgent = agentSelect.value;
+      
+      // Add user message to display
+      addMessage(message, 'user', `${selectedAgent} • ${new Date().toLocaleTimeString()}`);
+      
+      chatInput.value = '';
+      chatSubmit.disabled = true;
+      
+      // Show loading indicator
+      const loadingDiv = document.createElement('div');
+      loadingDiv.className = 'loading-indicator';
+      loadingDiv.id = 'loading';
+      loadingDiv.textContent = 'Sending...';
+      chatMessages.appendChild(loadingDiv);
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+
+      try {
+        const response = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            agent: selectedAgent,
+            message: message
+          })
+        });
+
+        const data = await response.json();
+        
+        // Remove loading indicator
+        const loading = document.getElementById('loading');
+        if (loading) loading.remove();
+
+        if (data.success) {
+          addMessage(data.response || data.message, 'agent', `${selectedAgent} • ${new Date().toLocaleTimeString()}`);
+        } else {
+          addMessage(data.error || 'Failed to get response', 'error', new Date().toLocaleTimeString());
+        }
+      } catch (err) {
+        const loading = document.getElementById('loading');
+        if (loading) loading.remove();
+        
+        addMessage('Connection error: ' + err.message, 'error', new Date().toLocaleTimeString());
+      } finally {
+        chatSubmit.disabled = false;
+        chatInput.focus();
+      }
+    }
+
+    chatSubmit.addEventListener('click', sendChatMessage);
+    
+    chatInput.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendChatMessage();
+      }
+    });
+
+    // Poll for new chat messages every 2 seconds
+    setInterval(async () => {
+      try {
+        const response = await fetch('/api/chat/inbox');
+        const data = await response.json();
+        
+        if (data.messages && data.messages.length > 0) {
+          // This would be used if we implement real-time message receiving
+        }
+      } catch (err) {
+        // Silent fail for polling
+      }
+    }, 2000);
   </script>
 </body>
 </html>
