@@ -26,12 +26,13 @@ const gpuMetrics = require('./utils/gpuMetrics');
 const { MultiGPUManager } = require('./src/gpu/multiGPUManager');
 const { ModelRegistry } = require('./src/modelRegistry');
 const healthRouter = require('./routes/health');
+const monitoringRouter = require('./routes/monitoring');
 
 // VPS AI Integration
 const vpsAiIntegration = require('./src/vps/vpsAiIntegration');
 const vpsAiRoutes = require('./routes/vpsAi');
 const clineRouter = require('./routes/cline');
-const gordonMcpGateway = require('./gordon-mcp-gateway');
+const mcpGateway = require('./mcp-gateway');
 
 // Initialize GPU components
 let multiGPUManager = null;
@@ -105,16 +106,17 @@ async function initMesh() {
 // Health check routes
 app.use('/', healthRouter);
 
+// Monitoring routes - agent status dashboard
+app.use('/api/monitoring', monitoringRouter);
+
 // VPS AI routes
 app.use('/vps-ai', vpsAiRoutes);
 
 // Cline API routes (with truth guard)
 app.use('/api/cline', clineRouter);
 
-// ========================================
-// GORDON MCP GATEWAY - Docker Deployment
-// ========================================
-app.use('/gordon', gordonMcpGateway);
+// MCP Gateway - Chat API
+app.use('/', mcpGateway);
 
 // Initialize autonomous learning components
 const FeedbackCollector = require('./src/agents/FeedbackCollector');
