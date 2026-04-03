@@ -26,6 +26,7 @@ const gpuMetrics = require('./utils/gpuMetrics');
 const { MultiGPUManager } = require('./src/gpu/multiGPUManager');
 const { ModelRegistry } = require('./src/modelRegistry');
 const healthRouter = require('./routes/health');
+const monitoringRouter = require('./routes/monitoring');
 
 // VPS AI Integration
 const vpsAiIntegration = require('./src/vps/vpsAiIntegration');
@@ -104,6 +105,9 @@ async function initMesh() {
 
 // Health check routes
 app.use('/', healthRouter);
+
+// Monitoring routes - agent status dashboard
+app.use('/api/monitoring', monitoringRouter);
 
 // VPS AI routes
 app.use('/vps-ai', vpsAiRoutes);
